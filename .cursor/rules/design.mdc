@@ -1,0 +1,35 @@
+---
+description: UI/UX design rules for frontend work — DESIGN.md visual system and ui-ux-pro-max workflow
+globs:
+  - frontend/**
+  - "**/*.tsx"
+  - "**/*.jsx"
+  - "**/*.vue"
+  - "**/*.css"
+  - DESIGN.md
+  - design-system/**
+---
+
+## Design contract (headscale-management)
+
+This is an **infrastructure control plane** admin UI (tenants, workers, gateways).
+
+### Visual system
+- Read **`DESIGN.md`** at project root for colors, typography, components, spacing.
+- Style: Supabase-inspired — dark dashboard, emerald accent (`#3ecf8e`), data-dense tables.
+
+### UX workflow
+- For UI/UX tasks, follow **ui-ux-pro-max** skill (`.cursor/skills/ui-ux-pro-max/SKILL.md`).
+- Run design-system search when starting a new page:
+  `python3 .cursor/skills/ui-ux-pro-max/scripts/search.py "<page purpose>" --design-system -p "Headscale Management"`
+
+### Hierarchy
+1. `design-system/headscale-management/pages/<page>.md` (if exists)
+2. `DESIGN.md`
+3. `design-system/headscale-management/MASTER.md`
+
+### Defaults
+- Dark mode default
+- Icons: Lucide or Heroicons SVG — no emoji icons
+- `cursor-pointer` on clickable elements; visible focus states
+- Responsive: 375 / 768 / 1024 / 1440 px

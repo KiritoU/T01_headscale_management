@@ -1,0 +1,11 @@
+{
+  "id": "nmap",
+  "name": "Nmap",
+  "description": "Live host discovery on scanned subnets via nmap -sn",
+  "version": "1.0.0",
+  "commands": ["scan_network"],
+  "install": {
+    "type": "stub",
+    "script": "install-nmap.sh"
+  }
+}

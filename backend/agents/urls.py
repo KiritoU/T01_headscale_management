@@ -1,0 +1,25 @@
+from django.urls import path
+
+from agents.views import (
+    AgentCommandAckView,
+    AgentCommandEnqueueView,
+    AgentHeartbeatView,
+    AgentPollView,
+    AgentRegisterView,
+)
+
+urlpatterns = [
+    path("agents/register/", AgentRegisterView.as_view(), name="agent-register"),
+    path("agents/<uuid:agent_id>/heartbeat/", AgentHeartbeatView.as_view(), name="agent-heartbeat"),
+    path("agents/<uuid:agent_id>/poll/", AgentPollView.as_view(), name="agent-poll"),
+    path(
+        "agents/<uuid:agent_id>/commands/<uuid:cmd_id>/ack/",
+        AgentCommandAckView.as_view(),
+        name="agent-command-ack",
+    ),
+    path(
+        "agents/<uuid:agent_id>/commands/",
+        AgentCommandEnqueueView.as_view(),
+        name="agent-command-enqueue",
+    ),
+]

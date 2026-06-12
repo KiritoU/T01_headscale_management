@@ -1,0 +1,83 @@
+---
+description: "Agent orchestration: subagent-first strategy, parallel execution, specialized agents"
+alwaysApply: true
+---
+# Agent Orchestration
+
+## Subagent-First Strategy
+
+**Default to subagents (Task tool) whenever possible** to maximize speed and preserve the parent agent's context window.
+
+### Why Subagents
+
+- **Speed** — Independent work runs in parallel instead of sequentially
+- **Context preservation** — Exploration, grep sweeps, and multi-file reads stay isolated; the parent receives summaries, not raw dumps
+- **Specialization** — Route to domain agents for higher-quality output
+
+### When to Delegate
+
+- Codebase exploration across multiple directories or modules
+- Independent reviews (security + performance + types) — launch in parallel
+- Planning, code review, TDD, build/test troubleshooting
+- Any task that would flood parent context with file contents or search output
+
+### When NOT to Delegate
+
+- Single-file edits where the target is already known
+- Trivial fixes requiring fewer than 3 tool calls
+- User explicitly wants direct work in the main thread
+
+### Execution Pattern
+
+1. Break work into independent subtasks
+2. Launch subagents **in parallel in one message** when tasks do not depend on each other
+3. Parent synthesizes subagent results — do not re-read files subagents already processed
+4. Use `run_in_background: true` for long-running subagents and continue other work
+
+## Available Agents
+
+Located in `~/.claude/agents/`:
+
+| Agent | Purpose | When to Use |
+|-------|---------|-------------|
+| planner | Implementation planning | Complex features, refactoring |
+| architect | System design | Architectural decisions |
+| tdd-guide | Test-driven development | New features, bug fixes |
+| code-reviewer | Code review | After writing code |
+| security-reviewer | Security analysis | Before commits |
+| build-error-resolver | Fix build errors | When build fails |
+| e2e-runner | E2E testing | Critical user flows |
+| refactor-cleaner | Dead code cleanup | Code maintenance |
+| doc-updater | Documentation | Updating docs |
+
+## Immediate Agent Usage
+
+No user prompt needed:
+1. Complex feature requests - Use **planner** agent
+2. Code just written/modified - Use **code-reviewer** agent
+3. Bug fix or new feature - Use **tdd-guide** agent
+4. Architectural decision - Use **architect** agent
+
+## Parallel Task Execution
+
+ALWAYS use parallel Task execution for independent operations:
+
+```markdown
+# GOOD: Parallel execution
+Launch 3 agents in parallel:
+1. Agent 1: Security analysis of auth module
+2. Agent 2: Performance review of cache system
+3. Agent 3: Type checking of utilities
+
+# BAD: Sequential when unnecessary
+First agent 1, then agent 2, then agent 3
+```
+
+## Multi-Perspective Analysis
+
+For complex problems, use split role sub-agents:
+- Factual reviewer
+- Senior engineer
+- Security expert
+- Consistency reviewer
+- Redundancy checker

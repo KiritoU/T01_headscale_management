@@ -1,0 +1,15 @@
+[Unit]
+Description=Headscale Gateway Agent (@SERVICE_NAME@)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=@INSTALL_DIR@/gateway-agent.env
+WorkingDirectory=@INSTALL_DIR@
+ExecStart=@RUNNER@ -m agent_daemon.gateway_daemon
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

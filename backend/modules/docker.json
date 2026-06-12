@@ -1,0 +1,11 @@
+{
+  "id": "docker",
+  "name": "Docker",
+  "description": "Docker Engine for tenant compose stacks on VPS workers",
+  "version": "1.0.0",
+  "commands": ["provision_tenant", "start_tenant", "stop_tenant", "verify_tenant", "bootstrap_tenant"],
+  "install": {
+    "type": "script",
+    "script": "curl -fsSL https://get.docker.com | sh"
+  }
+}

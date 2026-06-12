@@ -1,0 +1,16 @@
+[Unit]
+Description=Headscale Worker Agent (@SERVICE_NAME@)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=@INSTALL_DIR@/worker-agent.env
+Environment=PYTHONPATH=@INSTALL_DIR@
+WorkingDirectory=@INSTALL_DIR@
+ExecStart=@INSTALL_DIR@/.venv/bin/python -m agent_daemon.worker_daemon
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+{
+  "id": "tailscale",
+  "name": "Tailscale",
+  "description": "tailscaled and tailscale CLI for gateway enrollment and route advertisement",
+  "version": "1.0.0",
+  "commands": ["tailscale_up", "tailscale_status"],
+  "install": {
+    "type": "stub",
+    "script": "install-tailscale.sh"
+  }
+}
