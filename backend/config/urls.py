@@ -5,10 +5,13 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 
+from accounts.urls import admin_urlpatterns, auth_urlpatterns
 from core.scripts import gateway_agent_script, worker_agent_script
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("api/auth/", include(auth_urlpatterns)),
+    path("api/admin/", include(admin_urlpatterns)),
     path("api/", include("core.urls")),
     path("api/v1/", include("agents.urls")),
     path("api/tenants/", include("tenants.urls")),

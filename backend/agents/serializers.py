@@ -27,6 +27,14 @@ class AgentRegisterSerializer(serializers.Serializer):
         worker_id = attrs.get("worker_id")
         gateway_id = attrs.get("gateway_id")
         enrollment_token = (attrs.get("enrollment_token") or "").strip()
+        allow_admin_override = bool(self.context.get("allow_admin_override", False))
+
+        if not enrollment_token and not allow_admin_override:
+            raise serializers.ValidationError({"enrollment_token": "This field is required."})
+        if (worker_id or gateway_id) and not allow_admin_override:
+            raise serializers.ValidationError(
+                "Direct worker_id/gateway_id registration is disabled; use enrollment_token.",
+            )
 
         if agent_type == AgentType.WORKER and gateway_id:
             raise serializers.ValidationError("gateway_id is not valid for worker agents.")
@@ -63,12 +71,14 @@ class AgentRegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError({"gateway_id": "Gateway not found."})
 
         attrs["enrollment_token"] = enrollment_token
+        attrs["allow_admin_override"] = allow_admin_override
         return attrs
 
     def create(self, validated_data):
         from agents.models import Agent
 
         enrollment_token = validated_data.pop("enrollment_token", "")
+        allow_admin_override = validated_data.pop("allow_admin_override", False)
         hostname = validated_data.pop("hostname", "")
         poll_interval_seconds = validated_data.get("poll_interval_seconds", 15)
         worker_id = validated_data.pop("worker_id", None)
@@ -102,6 +112,10 @@ class AgentRegisterSerializer(serializers.Serializer):
                 )
                 agent.refresh_from_db()
             return agent, raw_token
+
+        if not allow_admin_override:
+            msg = "Enrollment token is required."
+            raise serializers.ValidationError({"enrollment_token": msg})
 
         creds = create_agent_token()
 

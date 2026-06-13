@@ -1,11 +1,18 @@
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.models import ScopeType
+from accounts.permissions import (
+    DenyViewerOnWorkersGateways,
+    IsAuthenticatedHuman,
+    ScopedResourceAccess,
+)
 from agents.authentication import AgentBearerAuthentication
 from agents.models import Agent, AgentCommand, AgentModule, CommandState
 from agents.permissions import IsAgentOwner
@@ -18,18 +25,24 @@ from agents.serializers import (
 )
 from agents.services import ack_command, dispatch_commands
 from workers.tenant_services import sync_tenant_from_acked_command
-from core.permissions import DebugOrTestAllowAny
 from core.responses import api_envelope
 from gateways.models import Gateway, GatewayStatus
 from workers.models import Worker, WorkerStatus
 
 
 class AgentRegisterView(APIView):
-    authentication_classes: list = []
+    authentication_classes = [SessionAuthentication]
     permission_classes = [AllowAny]
 
     def post(self, request: Request) -> Response:
-        serializer = AgentRegisterSerializer(data=request.data)
+        allow_admin_override = bool(
+            getattr(request.user, "is_authenticated", False)
+            and getattr(request.user, "is_admin", False)
+        )
+        serializer = AgentRegisterSerializer(
+            data=request.data,
+            context={"allow_admin_override": allow_admin_override},
+        )
         serializer.is_valid(raise_exception=True)
         agent, token = serializer.save()
         return Response(
@@ -123,11 +136,27 @@ class AgentCommandAckView(APIView):
 
 
 class AgentCommandEnqueueView(APIView):
-    authentication_classes: list = []
-    permission_classes = [DebugOrTestAllowAny]
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways, ScopedResourceAccess]
+    scope_type = ScopeType.WORKER
+
+    def get_scope_type(self, obj: Agent):
+        if obj.agent_type == "gateway":
+            return ScopeType.GATEWAY
+        return ScopeType.WORKER
+
+    def get_scope_id(self, obj: Agent):
+        if obj.agent_type == "gateway":
+            if not hasattr(obj, "gateway"):
+                return None
+            return obj.gateway.id
+        if not hasattr(obj, "worker"):
+            return None
+        return obj.worker.id
 
     def post(self, request: Request, agent_id: str) -> Response:
         agent = get_object_or_404(Agent, id=agent_id)
+        self.check_object_permissions(request, agent)
 
         serializer = AgentCommandEnqueueSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

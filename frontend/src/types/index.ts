@@ -1,3 +1,35 @@
+export type Role = 'admin' | 'editor' | 'viewer'
+
+export type ScopeType = 'worker' | 'tenant' | 'gateway'
+
+export type AccessLevel = 'view' | 'edit'
+
+export interface AuthUser {
+  id: string
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+  role: Role
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ResourceGrant {
+  id: string
+  scope_type: ScopeType
+  scope_id: string
+  access_level: AccessLevel
+  granted_by_id: string | null
+  created_at: string
+}
+
+export interface AuthMeResponse {
+  user: AuthUser
+  grants: ResourceGrant[]
+}
+
 export type BootstrapStatus =
   | 'pending'
   | 'provisioning'

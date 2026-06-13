@@ -2,15 +2,22 @@ from __future__ import annotations
 
 from django.shortcuts import get_object_or_404
 from rest_framework import status
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from agents.models import AgentCommand
-from core.permissions import DebugOrTestAllowAny
+from accounts.models import ScopeType
+from accounts.permissions import (
+    DenyViewerOnWorkersGateways,
+    IsAuthenticatedHuman,
+    ScopedResourceAccess,
+)
 from core.responses import api_envelope
 from lifecycle.services import TenantLifecycleError, enqueue_bootstrap_tenant, enqueue_verify_tenant
 from tenants.models import Tenant
+from tenants.serializers import redact_secrets_from_mapping
 from workers.models import Worker
 from workers.tenant_serializers import (
     WorkerTenantBulkCreateSerializer,
@@ -42,11 +49,20 @@ def _get_worker_tenant(worker_id: str, tenant_id: str) -> tuple[Worker, Tenant]:
     return worker, tenant
 
 
-class WorkerTenantSummaryView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+class WorkerScopedAPIView(APIView):
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways, ScopedResourceAccess]
+    scope_type = ScopeType.WORKER
+
+    def get_scope_id(self, obj: Worker):
+        return obj.id
+
+
+class WorkerTenantSummaryView(WorkerScopedAPIView):
 
     def get(self, request: Request, worker_id: str) -> Response:
         worker = get_object_or_404(Worker, id=worker_id)
+        self.check_object_permissions(request, worker)
         summary = get_tenant_summary(worker)
         serializer = WorkerTenantSummarySerializer(
             {
@@ -58,21 +74,21 @@ class WorkerTenantSummaryView(APIView):
         return Response(api_envelope(data=serializer.data))
 
 
-class WorkerTenantListView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+class WorkerTenantListView(WorkerScopedAPIView):
 
     def get(self, request: Request, worker_id: str) -> Response:
         worker = get_object_or_404(Worker, id=worker_id)
+        self.check_object_permissions(request, worker)
         tenants = Tenant.objects.filter(worker=worker).order_by("slug")
         serializer = WorkerTenantSerializer(tenants, many=True)
         return Response(api_envelope(data=serializer.data))
 
 
-class WorkerTenantBulkCreateView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+class WorkerTenantBulkCreateView(WorkerScopedAPIView):
 
     def post(self, request: Request, worker_id: str) -> Response:
         worker = get_object_or_404(Worker, id=worker_id)
+        self.check_object_permissions(request, worker)
         serializer = WorkerTenantBulkCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -93,11 +109,11 @@ class WorkerTenantBulkCreateView(APIView):
         return Response(api_envelope(data=response_serializer.data), status=status.HTTP_201_CREATED)
 
 
-class WorkerTenantBulkProvisionView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+class WorkerTenantBulkProvisionView(WorkerScopedAPIView):
 
     def post(self, request: Request, worker_id: str) -> Response:
         worker = get_object_or_404(Worker.objects.select_related("agent"), id=worker_id)
+        self.check_object_permissions(request, worker)
         try:
             commands = bulk_provision_pending_tenants(worker)
         except WorkerTenantError as exc:
@@ -119,11 +135,11 @@ class WorkerTenantBulkProvisionView(APIView):
         )
 
 
-class WorkerTenantProvisionView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+class WorkerTenantProvisionView(WorkerScopedAPIView):
 
     def post(self, request: Request, worker_id: str, tenant_id: str) -> Response:
-        _worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        self.check_object_permissions(request, worker)
         try:
             command = enqueue_provision_tenant(tenant)
         except WorkerTenantError as exc:
@@ -144,11 +160,11 @@ class WorkerTenantProvisionView(APIView):
         )
 
 
-class WorkerTenantStartView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+class WorkerTenantStartView(WorkerScopedAPIView):
 
     def post(self, request: Request, worker_id: str, tenant_id: str) -> Response:
-        _worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        self.check_object_permissions(request, worker)
         try:
             command = enqueue_start_tenant(tenant)
         except WorkerTenantError as exc:
@@ -167,11 +183,11 @@ class WorkerTenantStartView(APIView):
         )
 
 
-class WorkerTenantStopView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+class WorkerTenantStopView(WorkerScopedAPIView):
 
     def post(self, request: Request, worker_id: str, tenant_id: str) -> Response:
-        _worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        self.check_object_permissions(request, worker)
         try:
             command = enqueue_stop_tenant(tenant)
         except WorkerTenantError as exc:
@@ -190,11 +206,11 @@ class WorkerTenantStopView(APIView):
         )
 
 
-class WorkerTenantVerifyView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+class WorkerTenantVerifyView(WorkerScopedAPIView):
 
     def post(self, request: Request, worker_id: str, tenant_id: str) -> Response:
-        _worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        self.check_object_permissions(request, worker)
         try:
             command = enqueue_verify_tenant(tenant)
         except TenantLifecycleError as exc:
@@ -213,11 +229,11 @@ class WorkerTenantVerifyView(APIView):
         )
 
 
-class WorkerTenantBootstrapView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+class WorkerTenantBootstrapView(WorkerScopedAPIView):
 
     def post(self, request: Request, worker_id: str, tenant_id: str) -> Response:
-        _worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        self.check_object_permissions(request, worker)
         try:
             command = enqueue_bootstrap_tenant(tenant)
         except TenantLifecycleError as exc:
@@ -239,21 +255,22 @@ class WorkerTenantBootstrapView(APIView):
         )
 
 
-class WorkerTenantDetailView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+class WorkerTenantDetailView(WorkerScopedAPIView):
 
     def get(self, request: Request, worker_id: str, tenant_id: str) -> Response:
-        _worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        self.check_object_permissions(request, worker)
         tenant = (
             Tenant.objects.select_related("worker")
             .prefetch_related("health_checks")
             .get(pk=tenant.id)
         )
-        serializer = WorkerTenantDetailSerializer(tenant)
+        serializer = WorkerTenantDetailSerializer(tenant, context={"request": request})
         return Response(api_envelope(data=serializer.data))
 
     def delete(self, request: Request, worker_id: str, tenant_id: str) -> Response:
         worker = get_object_or_404(Worker.objects.select_related("agent"), id=worker_id)
+        self.check_object_permissions(request, worker)
         tenant = get_object_or_404(Tenant, id=tenant_id, worker_id=worker.id)
         try:
             remove_tenant(worker, tenant)
@@ -263,11 +280,11 @@ class WorkerTenantDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class WorkerTenantCommandPollView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+class WorkerTenantCommandPollView(WorkerScopedAPIView):
 
     def get(self, request: Request, worker_id: str, tenant_id: str, cmd_id: str) -> Response:
         worker = get_object_or_404(Worker.objects.select_related("agent"), id=worker_id)
+        self.check_object_permissions(request, worker)
         tenant = get_object_or_404(Tenant, id=tenant_id, worker_id=worker.id)
         if worker.agent_id is None:
             return Response(
@@ -284,12 +301,16 @@ class WorkerTenantCommandPollView(APIView):
         sync_tenant_from_acked_command(command)
         tenant.refresh_from_db()
 
+        result = command.result
+        if isinstance(result, dict):
+            result = redact_secrets_from_mapping(result, request.user, tenant=tenant)
+
         data = {
             "id": command.id,
             "command": command.command,
             "state": command.state,
             "payload": command.payload,
-            "result": command.result,
+            "result": result,
             "created_at": command.created_at,
             "acked_at": command.acked_at,
             "runtime_status": tenant.runtime_status,

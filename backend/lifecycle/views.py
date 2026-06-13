@@ -3,10 +3,17 @@ from __future__ import annotations
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.models import ScopeType
+from accounts.permissions import (
+    DenyViewerOnWorkersGateways,
+    IsAuthenticatedHuman,
+    ScopedResourceAccess,
+)
 from core.responses import api_envelope
 from lifecycle.generator import generate_tenant_config
 from lifecycle.scripts import SUPPORTED_SCRIPT_NAMES, generate_script
@@ -19,14 +26,30 @@ from tenants.models import Tenant
 
 
 class TenantConfigView(APIView):
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways, ScopedResourceAccess]
+    scope_type = ScopeType.TENANT
+
+    def get_scope_id(self, obj: Tenant):
+        return obj.id
+
     def get(self, request: Request, tenant_id: str) -> Response:
         tenant = get_object_or_404(Tenant, pk=tenant_id)
+        self.check_object_permissions(request, tenant)
         return Response(generate_tenant_config(tenant))
 
 
 class TenantScriptView(APIView):
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways, ScopedResourceAccess]
+    scope_type = ScopeType.TENANT
+
+    def get_scope_id(self, obj: Tenant):
+        return obj.id
+
     def get(self, request: Request, tenant_id: str, name: str) -> Response | HttpResponse:
         tenant = get_object_or_404(Tenant, pk=tenant_id)
+        self.check_object_permissions(request, tenant)
         if name not in SUPPORTED_SCRIPT_NAMES:
             return Response(
                 api_envelope(error=f"Unsupported script: {name}"),
@@ -41,8 +64,16 @@ class TenantScriptView(APIView):
 
 
 class TenantVerifyView(APIView):
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways, ScopedResourceAccess]
+    scope_type = ScopeType.TENANT
+
+    def get_scope_id(self, obj: Tenant):
+        return obj.id
+
     def post(self, request: Request, tenant_id: str) -> Response:
         tenant = get_object_or_404(Tenant.objects.select_related("worker__agent"), pk=tenant_id)
+        self.check_object_permissions(request, tenant)
         try:
             command = enqueue_verify_tenant(tenant)
         except TenantLifecycleError as exc:
@@ -61,8 +92,16 @@ class TenantVerifyView(APIView):
 
 
 class TenantBootstrapView(APIView):
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways, ScopedResourceAccess]
+    scope_type = ScopeType.TENANT
+
+    def get_scope_id(self, obj: Tenant):
+        return obj.id
+
     def post(self, request: Request, tenant_id: str) -> Response:
         tenant = get_object_or_404(Tenant.objects.select_related("worker__agent"), pk=tenant_id)
+        self.check_object_permissions(request, tenant)
         try:
             command = enqueue_bootstrap_tenant(tenant)
         except TenantLifecycleError as exc:

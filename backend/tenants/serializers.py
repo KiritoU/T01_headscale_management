@@ -6,6 +6,62 @@ from tenants.models import BootstrapStatus, RuntimeStatus, Tenant, TenantHealth
 from tenants.validators import validate_desired_config
 from workers.models import Worker
 
+_SECRET_FIELDS = frozenset(
+    {
+        "api_key",
+        "auth_key_gateway",
+        "auth_key_workspace",
+        "auth_key",
+    }
+)
+
+
+def user_can_view_tenant_secrets(user, tenant: Tenant | None) -> bool:
+    """Admins and users with scoped tenant access may read bootstrap credentials."""
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    if getattr(user, "is_admin", False):
+        return True
+    if tenant is None or not hasattr(user, "role"):
+        return False
+
+    from accounts.models import ScopeType
+    from accounts.scoping import effective_access
+
+    return effective_access(user, scope_type=ScopeType.TENANT, scope_id=tenant.id) is not None
+
+
+def redact_secrets_from_mapping(
+    data: dict | None,
+    user,
+    *,
+    tenant: Tenant | None = None,
+) -> dict | None:
+    if data is None:
+        return None
+    if user_can_view_tenant_secrets(user, tenant):
+        return data
+
+    sanitized = dict(data)
+    for key in _SECRET_FIELDS:
+        sanitized.pop(key, None)
+
+    for nested_key in ("bootstrap_info", "bootstrap"):
+        nested = sanitized.get(nested_key)
+        if isinstance(nested, dict):
+            sanitized[nested_key] = redact_secrets_from_mapping(nested, user, tenant=tenant)
+
+    return sanitized
+
+
+def redact_bootstrap_info_for_user(
+    bootstrap_info: dict | None,
+    user,
+    *,
+    tenant: Tenant | None = None,
+) -> dict | None:
+    return redact_secrets_from_mapping(bootstrap_info, user, tenant=tenant)
+
 
 class TenantHealthSerializer(serializers.ModelSerializer):
     class Meta:
@@ -56,7 +112,9 @@ class TenantDetailSerializer(TenantSerializer):
         return TenantHealthSerializer(checks, many=True).data
 
     def get_bootstrap_info(self, tenant: Tenant) -> dict | None:
-        return get_bootstrap_info(tenant)
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
+        return redact_bootstrap_info_for_user(get_bootstrap_info(tenant), user, tenant=tenant)
 
 
 class TenantWriteSerializer(serializers.ModelSerializer):

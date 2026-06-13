@@ -239,6 +239,59 @@ class TestTailscaleConnectContextAPI:
         assert data["tenants"]
         assert "secret1234" not in json.dumps(data)
 
+    def test_context_api_denies_cross_tenant_without_grant(
+        self,
+        client,
+        admin_user,
+        editor_user,
+        enrolled_gateway,
+        tenant,
+        worker,
+    ):
+        from accounts.models import AccessLevel, ResourceGrant, ScopeType
+
+        gateway, _ = enrolled_gateway
+        other_tenant = Tenant.objects.create(
+            slug="team-other-ts",
+            headscale_host="headscale-other-ts.example.com",
+            headplane_host="headplane-other-ts.example.com",
+            db_name="hs_other_ts",
+            worker=worker,
+            desired_config={"production": True},
+            bootstrap_secrets={"auth_key_gateway": "tskey-other-secret5678"},
+        )
+        ResourceGrant.objects.create(
+            user=editor_user,
+            scope_type=ScopeType.GATEWAY,
+            scope_id=gateway.id,
+            access_level=AccessLevel.VIEW,
+            granted_by=admin_user,
+        )
+        client.force_login(editor_user)
+
+        denied = client.get(
+            reverse("gateway-tailscale-up-context", kwargs={"gateway_id": gateway.id}),
+            {"tenant_id": str(other_tenant.id)},
+        )
+
+        assert denied.status_code == 403
+
+        ResourceGrant.objects.create(
+            user=editor_user,
+            scope_type=ScopeType.TENANT,
+            scope_id=other_tenant.id,
+            access_level=AccessLevel.VIEW,
+            granted_by=admin_user,
+        )
+
+        allowed = client.get(
+            reverse("gateway-tailscale-up-context", kwargs={"gateway_id": gateway.id}),
+            {"tenant_id": str(other_tenant.id)},
+        )
+
+        assert allowed.status_code == 200
+        assert allowed.json()["data"]["tenant_preview"]["tenant_id"] == str(other_tenant.id)
+
 
 @pytest.mark.django_db
 class TestTailscaleUpCommandAPI:

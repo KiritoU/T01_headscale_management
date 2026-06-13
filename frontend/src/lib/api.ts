@@ -1,9 +1,13 @@
 import type {
+  AuthMeResponse,
+  AuthUser,
   EnrollmentTokenResult,
   Gateway,
   GatewayCommand,
   GatewayCommandDetail,
   GatewayRoute,
+  ResourceGrant,
+  Role,
   TailscaleConnectContext,
   Tenant,
   TenantActionResult,
@@ -50,6 +54,39 @@ export class ApiError extends Error {
   }
 }
 
+let cachedCsrfToken: string | null = null
+
+function readCsrfCookie(): string | null {
+  if (typeof document === 'undefined') {
+    return null
+  }
+  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)
+  return match ? decodeURIComponent(match[1]) : null
+}
+
+export function getCsrfToken(): string | null {
+  return cachedCsrfToken ?? readCsrfCookie()
+}
+
+export async function bootstrapCsrf(): Promise<string> {
+  const data = await request<{ csrf_token: string }>('/api/auth/csrf/', {
+    skipAuthRedirect: true,
+  })
+  cachedCsrfToken = data.csrf_token
+  return data.csrf_token
+}
+
+const AUTH_EXEMPT_PATHS = [
+  '/api/auth/login/',
+  '/api/auth/logout/',
+  '/api/auth/csrf/',
+  '/api/auth/me/',
+]
+
+interface RequestOptions extends RequestInit {
+  skipAuthRedirect?: boolean
+}
+
 function isEnvelope<T>(body: unknown): body is ApiEnvelope<T> {
   return (
     typeof body === 'object' &&
@@ -72,16 +109,40 @@ async function parseJson(response: Response): Promise<unknown> {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const url = `${API_URL}${path}`
   const headers = new Headers(options.headers)
+  const method = (options.method ?? 'GET').toUpperCase()
+  const isMutating = !['GET', 'HEAD', 'OPTIONS'].includes(method)
 
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
 
-  const response = await fetch(url, { ...options, headers })
+  if (isMutating) {
+    const csrfToken = getCsrfToken()
+    if (csrfToken) {
+      headers.set('X-CSRFToken', csrfToken)
+    }
+  }
+
+  const { skipAuthRedirect, ...fetchOptions } = options
+  const response = await fetch(url, {
+    ...fetchOptions,
+    headers,
+    credentials: 'include',
+  })
   const body = await parseJson(response)
+
+  if (
+    response.status === 401 &&
+    !skipAuthRedirect &&
+    !AUTH_EXEMPT_PATHS.some((exemptPath) => path.startsWith(exemptPath)) &&
+    typeof window !== 'undefined' &&
+    !window.location.pathname.startsWith('/login')
+  ) {
+    window.location.assign('/login')
+  }
 
   if (isEnvelope<T>(body)) {
     if (!body.success) {
@@ -122,6 +183,61 @@ function buildQuery(params: Record<string, string | undefined>): string {
 }
 
 export const api = {
+  getMe: () =>
+    request<AuthMeResponse>('/api/auth/me/', { skipAuthRedirect: true }),
+
+  login: (username: string, password: string) =>
+    request<AuthUser>('/api/auth/login/', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+      skipAuthRedirect: true,
+    }),
+
+  logout: () =>
+    request<null>('/api/auth/logout/', {
+      method: 'POST',
+      skipAuthRedirect: true,
+    }),
+
+  listAdminUsers: () => request<AuthUser[]>('/api/admin/users/'),
+
+  createAdminUser: (body: {
+    username: string
+    password: string
+    role: Role
+    email?: string
+  }) =>
+    request<AuthUser>('/api/admin/users/', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  deleteAdminUser: (userId: string) =>
+    request<null>(`/api/admin/users/${userId}/`, {
+      method: 'DELETE',
+    }),
+
+  listUserGrants: (userId: string) =>
+    request<ResourceGrant[]>(`/api/admin/users/${userId}/grants/`),
+
+  createUserGrant: (
+    userId: string,
+    body: {
+      scope_type: string
+      scope_id: string
+      access_level: string
+    },
+  ) =>
+    request<ResourceGrant>(`/api/admin/users/${userId}/grants/`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  deleteGrant: (grantId: string) =>
+    request<null>(`/api/admin/grants/${grantId}/`, {
+      method: 'DELETE',
+    }),
+
   listTenants: (params: ListTenantsParams = {}) =>
     request<Tenant[]>(
       `/api/tenants/${buildQuery({

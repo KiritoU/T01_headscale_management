@@ -594,6 +594,81 @@ class TestWorkerTenantApi:
         assert pending_tenant.bootstrap_status == BootstrapStatus.BOOTSTRAPPED
         assert pending_tenant.bootstrap_secrets["api_key"] == "hskey-api-detail"
 
+    def test_command_poll_redacts_bootstrap_secrets_for_non_admin(
+        self,
+        client,
+        admin_user,
+        editor_user,
+        ready_worker,
+        pending_tenant,
+    ):
+        from accounts.models import AccessLevel, ResourceGrant, ScopeType
+
+        ResourceGrant.objects.create(
+            user=editor_user,
+            scope_type=ScopeType.WORKER,
+            scope_id=ready_worker.id,
+            access_level=AccessLevel.EDIT,
+            granted_by=admin_user,
+        )
+        client.force_login(editor_user)
+
+        bootstrap = client.post(
+            reverse(
+                "worker-tenant-bootstrap",
+                kwargs={"worker_id": ready_worker.id, "tenant_id": pending_tenant.id},
+            ),
+        )
+        command_id = bootstrap.json()["data"]["command_id"]
+        stored = AgentCommand.objects.get(id=command_id)
+        ack_command(
+            stored,
+            state=CommandState.ACKED,
+            result={
+                "exit_code": 0,
+                "bootstrap_status": BootstrapStatus.BOOTSTRAPPED,
+                "bootstrap": {
+                    "api_key": "hskey-api-redact",
+                    "auth_key_gateway": "hskey-gateway-redact",
+                    "auth_key_workspace": "hskey-workspace-redact",
+                    "auth_key": "hskey-auth-redact",
+                    "admin_user_id": "admin-redact",
+                },
+            },
+        )
+
+        response = client.get(
+            reverse(
+                "worker-tenant-command-poll",
+                kwargs={
+                    "worker_id": ready_worker.id,
+                    "tenant_id": pending_tenant.id,
+                    "cmd_id": command_id,
+                },
+            ),
+        )
+
+        assert response.status_code == 200
+        result = response.json()["data"]["result"]
+        assert result["bootstrap"]["api_key"] == "hskey-api-redact"
+        assert result["bootstrap"]["auth_key_gateway"] == "hskey-gateway-redact"
+        assert result["bootstrap"]["auth_key_workspace"] == "hskey-workspace-redact"
+        assert result["bootstrap"]["admin_user_id"] == "admin-redact"
+
+        client.force_login(admin_user)
+        admin_response = client.get(
+            reverse(
+                "worker-tenant-command-poll",
+                kwargs={
+                    "worker_id": ready_worker.id,
+                    "tenant_id": pending_tenant.id,
+                    "cmd_id": command_id,
+                },
+            ),
+        )
+        admin_result = admin_response.json()["data"]["result"]
+        assert admin_result["bootstrap"]["api_key"] == "hskey-api-redact"
+
     def test_command_poll_records_health_for_verify_ack(self, client, ready_worker, pending_tenant):
         verify = client.post(
             reverse(

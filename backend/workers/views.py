@@ -1,14 +1,21 @@
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.mixins import ScopedQuerysetMixin
+from accounts.models import ScopeType
+from accounts.permissions import (
+    DenyViewerOnWorkersGateways,
+    IsAuthenticatedHuman,
+    ScopedResourceAccess,
+)
 from agents.liveness import mark_stale_workers_and_gateways_offline
 from agents.serializers import AgentCommandResponseSerializer
-from core.permissions import DebugOrTestAllowAny
 from core.responses import api_envelope
 from workers.bundle import build_agent_daemon_tarball
 from workers.models import Worker
@@ -25,14 +32,19 @@ from workers.services import (
 )
 
 
-class WorkerViewSet(viewsets.ModelViewSet):
+class WorkerViewSet(ScopedQuerysetMixin, viewsets.ModelViewSet):
+    scope_type = ScopeType.WORKER
     queryset = Worker.objects.select_related("agent").prefetch_related("agent__modules")
     serializer_class = WorkerSerializer
+    permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways, ScopedResourceAccess]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
         mark_stale_workers_and_gateways_offline()
-        return super().get_queryset()
+        return self.filter_by_scope(super().get_queryset())
+
+    def get_scope_id(self, obj: Worker):
+        return obj.id
 
     def destroy(self, request: Request, *args, **kwargs) -> Response:
         worker = self.get_object()
@@ -47,10 +59,16 @@ class WorkerViewSet(viewsets.ModelViewSet):
 
 
 class WorkerDisconnectView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways, ScopedResourceAccess]
+    scope_type = ScopeType.WORKER
+
+    def get_scope_id(self, obj: Worker):
+        return obj.id
 
     def post(self, request: Request, worker_id: str) -> Response:
         worker = get_object_or_404(Worker, id=worker_id)
+        self.check_object_permissions(request, worker)
         try:
             disconnect_worker(worker)
         except ValueError as exc:
@@ -65,13 +83,19 @@ class WorkerDisconnectView(APIView):
 
 
 class WorkerCommandView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways, ScopedResourceAccess]
+    scope_type = ScopeType.WORKER
+
+    def get_scope_id(self, obj: Worker):
+        return obj.id
 
     def post(self, request: Request, worker_id: str) -> Response:
         worker = get_object_or_404(
             Worker.objects.select_related("agent"),
             id=worker_id,
         )
+        self.check_object_permissions(request, worker)
         serializer = WorkerCommandSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -93,7 +117,9 @@ class WorkerCommandView(APIView):
 
 
 class WorkerEnrollmentTokenCreateView(APIView):
-    permission_classes = [DebugOrTestAllowAny]
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways]
+    scope_type = ScopeType.WORKER
 
     def post(self, request: Request) -> Response:
         serializer = WorkerEnrollmentTokenCreateSerializer(data=request.data)

@@ -3,7 +3,7 @@ from rest_framework import serializers
 from lifecycle.identifiers import validate_suffix
 from tenants.detail import get_bootstrap_info, recent_health_checks
 from tenants.models import BootstrapStatus, RuntimeStatus, Tenant
-from tenants.serializers import TenantHealthSerializer
+from tenants.serializers import TenantHealthSerializer, redact_bootstrap_info_for_user
 
 
 class WorkerTenantSerializer(serializers.ModelSerializer):
@@ -57,7 +57,9 @@ class WorkerTenantDetailSerializer(WorkerTenantSerializer):
         return TenantHealthSerializer(checks, many=True).data
 
     def get_bootstrap_info(self, tenant: Tenant) -> dict | None:
-        return get_bootstrap_info(tenant)
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
+        return redact_bootstrap_info_for_user(get_bootstrap_info(tenant), user, tenant=tenant)
 
 
 class WorkerTenantCommandPollSerializer(serializers.Serializer):
