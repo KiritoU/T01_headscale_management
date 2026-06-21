@@ -5,7 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=@INSTALL_DIR@/gateway-agent.env
+EnvironmentFile=@ENV_FILE@
+Environment=PYTHONPATH=@INSTALL_DIR@
 WorkingDirectory=@INSTALL_DIR@
 ExecStart=@RUNNER@ -m agent_daemon.gateway_daemon
 Restart=always

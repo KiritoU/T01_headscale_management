@@ -43,11 +43,13 @@ class GatewaySerializer(serializers.ModelSerializer):
 class GatewayDetailSerializer(GatewaySerializer):
     last_discover_scan = serializers.SerializerMethodField()
     last_target_scan = serializers.SerializerMethodField()
+    last_monitor_scan = serializers.SerializerMethodField()
 
     class Meta(GatewaySerializer.Meta):
         fields = GatewaySerializer.Meta.fields + (
             "last_discover_scan",
             "last_target_scan",
+            "last_monitor_scan",
         )
 
     def get_last_discover_scan(self, gateway: Gateway) -> dict | None:
@@ -62,6 +64,12 @@ class GatewayDetailSerializer(GatewaySerializer):
             return None
         return GatewayCommandDetailSerializer(command).data
 
+    def get_last_monitor_scan(self, gateway: Gateway) -> dict | None:
+        command = get_latest_scan_command(gateway, "monitor")
+        if command is None:
+            return None
+        return GatewayCommandDetailSerializer(command).data
+
 
 class GatewayTagsSerializer(serializers.Serializer):
     custom_tags = serializers.ListField(
@@ -72,7 +80,13 @@ class GatewayTagsSerializer(serializers.Serializer):
 
 class GatewayCommandSerializer(serializers.Serializer):
     command = serializers.ChoiceField(
-        choices=["scan_network", "tailscale_up", "tailscale_status", "install_module"],
+        choices=[
+            "scan_network",
+            "tailscale_up",
+            "tailscale_status",
+            "install_module",
+            "vuln_scan",
+        ],
     )
     payload = serializers.JSONField(required=False, default=dict)
 

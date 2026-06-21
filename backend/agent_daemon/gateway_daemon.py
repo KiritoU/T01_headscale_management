@@ -13,13 +13,22 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_daemon.client import AgentClient
+from agent_daemon.masscan_scan import MASSCAN_MODULE, scan_cidr_masscan
 from agent_daemon.module_installer import (
+    IOT_PROBES_MODULE,
     NMAP_MODULE,
+    NUCLEI_MODULE,
+    SUPPORTED_MODULES,
     TAILSCALE_MODULE,
+    VULN_NSE_PACK_MODULE,
+    _nuclei_installed,
     install_gateway_module,
 )
+from agent_daemon.vuln_scan import run_vuln_scan
+from agent_daemon.vuln_worker import VulnWorkerPool
 from agent_daemon.network_scan import (
     ScanSubnetResult,
+    _cidr_overlaps_local,
     build_scan_response,
     enrich_subnet_with_nmap,
     parse_ip_routes,
@@ -52,6 +61,7 @@ class GatewayDaemon:
         nmap_runner: CommandRunner | None = None,
         tailscale_runner: CommandRunner | None = None,
         module_install_runner: CommandRunner | None = None,
+        masscan_runner: CommandRunner | None = None,
         auto_detect_modules: bool = False,
     ) -> None:
         self._client = client
@@ -61,10 +71,16 @@ class GatewayDaemon:
         self._nmap_runner = nmap_runner or self._default_nmap_runner
         self._tailscale_runner = tailscale_runner or self._default_command_runner
         self._module_install_runner = module_install_runner
+        self._masscan_runner = masscan_runner or self._default_masscan_runner
         initial_modules = (
             _detect_installed_modules() if auto_detect_modules else frozenset({CORE_MODULE})
         )
         self._state = GatewayDaemonState(installed_modules=initial_modules)
+        self._vuln_worker = VulnWorkerPool(
+            client,
+            nmap_runner=self._nmap_runner,
+            masscan_runner=self._masscan_runner,
+        )
 
     @property
     def state(self) -> GatewayDaemonState:
@@ -75,6 +91,7 @@ class GatewayDaemon:
         poll_response = self._client.poll()
         for command in poll_response.get("commands", []):
             self._handle_command(command)
+        self._vuln_worker.tick()
 
     def run_forever(self) -> None:
         while True:
@@ -121,6 +138,8 @@ class GatewayDaemon:
     ) -> tuple[dict[str, Any], str]:
         if command_type == "scan_network":
             return self._handle_scan_network(payload)
+        if command_type == "vuln_scan":
+            return self._handle_vuln_scan(payload)
         if command_type == "tailscale_up":
             return self._handle_tailscale_up(payload)
         if command_type == "tailscale_status":
@@ -137,28 +156,32 @@ class GatewayDaemon:
         )
 
     def _handle_scan_network(self, payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        started = time.monotonic()
         scan_mode = payload.get("mode", "discover")
         targets = list(payload.get("targets") or [])
+        has_masscan = MASSCAN_MODULE in self._state.installed_modules
         has_nmap = NMAP_MODULE in self._state.installed_modules
         modules_used = [CORE_MODULE]
         modules_missing: list[str] = []
 
-        if scan_mode == "target":
+        if scan_mode in {"target", "monitor"}:
             if not targets:
                 return (
                     {
                         "exit_code": 1,
                         "duration_ms": 0,
-                        "logs": "targets required for target scan mode",
+                        "logs": "targets required for target/monitor scan mode",
                     },
                     "failed",
                 )
-            if not has_nmap:
+            use_masscan = has_masscan
+            if not use_masscan and not has_nmap:
+                modules_missing.append(MASSCAN_MODULE)
                 return (
                     {
                         "exit_code": 1,
                         "duration_ms": 0,
-                        "logs": "nmap module is required for target CIDR scans",
+                        "logs": "masscan module is required for monitor/target discovery scans",
                     },
                     "failed",
                 )
@@ -180,14 +203,40 @@ class GatewayDaemon:
                         },
                         "failed",
                     )
-                subnets.append(
-                    scan_target_cidr(
+                if use_masscan:
+                    hosts = scan_cidr_masscan(
+                        validated,
+                        masscan_runner=self._masscan_runner,
+                    )
+                    subnets.append(
+                        ScanSubnetResult(
+                            cidr=validated,
+                            interface="",
+                            source="masscan",
+                            live_hosts=len(hosts),
+                            hosts=hosts,
+                            scan_mode=scan_mode,
+                            is_local=_cidr_overlaps_local(validated, local_cidrs),
+                        ),
+                    )
+                else:
+                    scanned = scan_target_cidr(
                         validated,
                         nmap_runner=self._nmap_runner,
                         local_cidrs=local_cidrs,
-                    ),
-                )
-            modules_used.append(NMAP_MODULE)
+                    )
+                    subnets.append(
+                        ScanSubnetResult(
+                            cidr=scanned.cidr,
+                            interface=scanned.interface,
+                            source=scanned.source,
+                            live_hosts=scanned.live_hosts,
+                            hosts=scanned.hosts,
+                            scan_mode=scan_mode,
+                            is_local=scanned.is_local,
+                        ),
+                    )
+            modules_used.append(MASSCAN_MODULE if use_masscan else NMAP_MODULE)
         else:
             subnets = parse_ip_routes(self._route_runner)
             if has_nmap:
@@ -206,10 +255,11 @@ class GatewayDaemon:
             modules_used=modules_used,
             modules_missing=modules_missing,
         )
+        duration_ms = int((time.monotonic() - started) * 1000)
         return (
             {
                 "exit_code": 0,
-                "duration_ms": 1,
+                "duration_ms": duration_ms,
                 "logs": json.dumps(body),
             },
             "acked",
@@ -336,7 +386,7 @@ class GatewayDaemon:
                 {"exit_code": 1, "duration_ms": 0, "logs": "missing module name"},
                 "failed",
             )
-        if module_name not in {TAILSCALE_MODULE, NMAP_MODULE}:
+        if module_name not in SUPPORTED_MODULES:
             return (
                 {
                     "exit_code": 1,
@@ -349,12 +399,50 @@ class GatewayDaemon:
         result, state = install_gateway_module(
             module_name,
             command_runner=self._module_install_runner,
+            control_plane_url=os.environ.get("CONTROL_PLANE_URL"),
         )
         if state == "acked":
             self._state = GatewayDaemonState(
                 installed_modules=self._state.installed_modules | {module_name},
             )
         return result, state
+
+    def _handle_vuln_scan(self, payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        targets = list(payload.get("targets") or [])
+        modules = list(payload.get("modules") or [])
+        if not targets:
+            return (
+                {
+                    "exit_code": 1,
+                    "duration_ms": 0,
+                    "logs": "targets required for vuln_scan",
+                },
+                "failed",
+            )
+        if NMAP_MODULE not in self._state.installed_modules:
+            return (
+                {
+                    "exit_code": 1,
+                    "duration_ms": 0,
+                    "logs": "nmap module is required for vuln_scan",
+                },
+                "failed",
+            )
+
+        body = run_vuln_scan(
+            targets,
+            nmap_runner=self._nmap_runner,
+            modules=modules,
+            masscan_runner=self._masscan_runner,
+        )
+        return (
+            {
+                "exit_code": 0,
+                "duration_ms": 1,
+                "logs": json.dumps(body),
+            },
+            "acked",
+        )
 
     def _default_command_runner(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(args, capture_output=True, text=True, check=False)
@@ -370,6 +458,17 @@ class GatewayDaemon:
             timeout=NMAP_SCAN_TIMEOUT_SECONDS,
         )
 
+    def _default_masscan_runner(self, args: list[str]) -> subprocess.CompletedProcess[str]:
+        from agent_daemon.masscan_scan import MASSCAN_SCAN_TIMEOUT_SECONDS
+
+        return subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=MASSCAN_SCAN_TIMEOUT_SECONDS,
+        )
+
 
 def _detect_installed_modules() -> frozenset[str]:
     modules = {CORE_MODULE}
@@ -377,6 +476,10 @@ def _detect_installed_modules() -> frozenset[str]:
         modules.add(TAILSCALE_MODULE)
     if shutil.which("nmap"):
         modules.add(NMAP_MODULE)
+    if shutil.which("masscan"):
+        modules.add(MASSCAN_MODULE)
+    if _nuclei_installed():
+        modules.add(NUCLEI_MODULE)
     return frozenset(modules)
 
 
@@ -400,8 +503,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--poll-interval",
         type=int,
-        default=DEFAULT_POLL_INTERVAL_SECONDS,
-        help="Seconds between poll cycles",
+        default=int(os.environ.get("POLL_INTERVAL", DEFAULT_POLL_INTERVAL_SECONDS)),
+        help="Seconds between poll cycles (env: POLL_INTERVAL)",
     )
     return parser.parse_args(argv)
 

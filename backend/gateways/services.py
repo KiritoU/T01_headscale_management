@@ -16,7 +16,9 @@ from gateways.models import EnrollmentToken, Gateway, GatewayStatus
 ENROLL_TOKEN_PREFIX = "enrl_"
 ENROLL_TOKEN_RANDOM_BYTES = 32
 
-GATEWAY_COMMANDS = frozenset({"scan_network", "tailscale_up", "tailscale_status", "install_module"})
+GATEWAY_COMMANDS = frozenset(
+    {"scan_network", "tailscale_up", "tailscale_status", "install_module", "vuln_scan"},
+)
 TAILSCALE_COMMANDS = frozenset({"tailscale_up", "tailscale_status"})
 
 

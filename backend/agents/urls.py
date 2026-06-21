@@ -7,6 +7,7 @@ from agents.views import (
     AgentPollView,
     AgentRegisterView,
 )
+from agents.monitoring_views import AgentVulnQueueView, AgentVulnResultsView
 
 urlpatterns = [
     path("agents/register/", AgentRegisterView.as_view(), name="agent-register"),
@@ -21,5 +22,15 @@ urlpatterns = [
         "agents/<uuid:agent_id>/commands/",
         AgentCommandEnqueueView.as_view(),
         name="agent-command-enqueue",
+    ),
+    path(
+        "agents/<uuid:agent_id>/monitoring/vuln-queue/",
+        AgentVulnQueueView.as_view(),
+        name="agent-vuln-queue",
+    ),
+    path(
+        "agents/<uuid:agent_id>/monitoring/vuln-results/",
+        AgentVulnResultsView.as_view(),
+        name="agent-vuln-results",
     ),
 ]

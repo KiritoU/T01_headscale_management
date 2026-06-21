@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -129,8 +130,21 @@ class AgentCommandAckView(APIView):
         data = serializer.validated_data
 
         ack_state = CommandState.ACKED if data["state"] == "acked" else CommandState.FAILED
-        ack_command(command, state=ack_state, result=data.get("result", {}))
-        sync_tenant_from_acked_command(command)
+        ack_result = data.get("result", {})
+        if command.state in {CommandState.ACKED, CommandState.FAILED}:
+            return Response({"ok": True})
+
+        with transaction.atomic():
+            ack_command(command, state=ack_state, result=ack_result)
+            command.refresh_from_db()
+            sync_tenant_from_acked_command(command)
+            from gateways.monitoring_service import (
+                process_monitor_scan_ack,
+                process_vuln_scan_ack,
+            )
+
+            process_monitor_scan_ack(command)
+            process_vuln_scan_ack(command)
 
         return Response({"ok": True})
 

@@ -9,7 +9,18 @@ import type {
   ResourceGrant,
   Role,
   TailscaleConnectContext,
+  DiscoveredHost,
+  EnsureMonitoringModulesResult,
+  GatewayMonitoringListParams,
+  GatewayMonitoringScanResult,
+  GatewayMonitoringVulnRescanResult,
+  GatewayMonitorPolicy,
+  GatewayMonitorPolicyPatch,
+  MonitorAlert,
+  PaginatedResult,
+  PaginationMeta,
   Tenant,
+  VulnFinding,
   TenantActionResult,
   TenantDetail,
   Worker,
@@ -22,10 +33,8 @@ import type {
   WorkerTenantSummary,
 } from '../types'
 
-/** In dev, default to same-origin so Vite proxy works when accessing via server IP. */
-const API_URL =
-  import.meta.env.VITE_API_URL ??
-  (import.meta.env.DEV ? '' : 'http://localhost:8000')
+/** Same-origin by default (Docker nginx). Set VITE_API_URL only for split dev hosts. */
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 export function getApiBaseUrl(): string {
   if (API_URL) {
@@ -180,6 +189,73 @@ function buildQuery(params: Record<string, string | undefined>): string {
   }
   const query = search.toString()
   return query ? `?${query}` : ''
+}
+
+function buildMonitoringQuery(params?: GatewayMonitoringListParams): string {
+  if (!params) {
+    return ''
+  }
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      search.set(key, String(value))
+    }
+  }
+  const query = search.toString()
+  return query ? `?${query}` : ''
+}
+
+async function requestPaginated<T>(
+  path: string,
+  params?: GatewayMonitoringListParams,
+): Promise<PaginatedResult<T>> {
+  const url = `${API_URL}${path}${buildMonitoringQuery(params)}`
+  const headers = new Headers()
+  const response = await fetch(url, {
+    headers,
+    credentials: 'include',
+  })
+  const body = await parseJson(response)
+
+  if (
+    response.status === 401 &&
+    !AUTH_EXEMPT_PATHS.some((exemptPath) => path.startsWith(exemptPath)) &&
+    typeof window !== 'undefined' &&
+    !window.location.pathname.startsWith('/login')
+  ) {
+    window.location.assign('/login')
+  }
+
+  if (isEnvelope<T[]>(body)) {
+    if (!body.success) {
+      throw new ApiError(body.error ?? 'Request failed', response.status)
+    }
+    const meta = body.meta as Partial<PaginationMeta>
+    return {
+      items: body.data,
+      meta: {
+        total: Number(meta.total ?? body.data.length),
+        page: Number(meta.page ?? 1),
+        limit: Number(meta.limit ?? body.data.length),
+        pages: Number(meta.pages ?? 1),
+      },
+    }
+  }
+
+  if (!response.ok) {
+    throw new ApiError(`HTTP ${response.status}`, response.status)
+  }
+
+  const items = body as T[]
+  return {
+    items,
+    meta: {
+      total: items.length,
+      page: 1,
+      limit: items.length,
+      pages: 1,
+    },
+  }
 }
 
 export const api = {
@@ -411,5 +487,65 @@ export const api = {
       `/api/gateways/${gatewayId}/tailscale-up/context/${buildQuery({
         tenant_id: tenantId,
       })}`,
+    ),
+
+  getGatewayMonitoring: (gatewayId: string) =>
+    request<GatewayMonitorPolicy>(`/api/gateways/${gatewayId}/monitoring/`),
+
+  patchGatewayMonitoring: (
+    gatewayId: string,
+    body: GatewayMonitorPolicyPatch,
+  ) =>
+    request<GatewayMonitorPolicy>(`/api/gateways/${gatewayId}/monitoring/`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  getGatewayMonitoringHosts: (
+    gatewayId: string,
+    params?: GatewayMonitoringListParams,
+  ) =>
+    requestPaginated<DiscoveredHost>(
+      `/api/gateways/${gatewayId}/monitoring/hosts/`,
+      params,
+    ),
+
+  getGatewayMonitoringAlerts: (
+    gatewayId: string,
+    params?: GatewayMonitoringListParams,
+  ) =>
+    requestPaginated<MonitorAlert>(
+      `/api/gateways/${gatewayId}/monitoring/alerts/`,
+      params,
+    ),
+
+  getGatewayMonitoringFindings: (
+    gatewayId: string,
+    params?: GatewayMonitoringListParams,
+  ) =>
+    requestPaginated<VulnFinding>(
+      `/api/gateways/${gatewayId}/monitoring/findings/`,
+      params,
+    ),
+
+  ensureGatewayMonitoringModules: (gatewayId: string) =>
+    request<EnsureMonitoringModulesResult>(
+      `/api/gateways/${gatewayId}/monitoring/modules/ensure/`,
+      { method: 'POST' },
+    ),
+
+  triggerGatewayMonitoringScan: (gatewayId: string) =>
+    request<GatewayMonitoringScanResult>(
+      `/api/gateways/${gatewayId}/monitoring/scan/`,
+      { method: 'POST' },
+    ),
+
+  triggerGatewayMonitoringVulnRescan: (
+    gatewayId: string,
+    body?: { ip?: string },
+  ) =>
+    request<GatewayMonitoringVulnRescanResult>(
+      `/api/gateways/${gatewayId}/monitoring/vuln-rescan/`,
+      { method: 'POST', body: JSON.stringify(body ?? {}) },
     ),
 }

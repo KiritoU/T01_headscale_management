@@ -1,6 +1,7 @@
 import { ArrowLeft, Copy, Loader2, Radar, RefreshCw, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { GatewayMonitoringPanel } from '../components/gateways/GatewayMonitoringPanel'
 import { TailscaleConnectPanel } from '../components/gateways/TailscaleConnectPanel'
 import { Button } from '../components/ui/Button'
 import { DataTable, type Column } from '../components/ui/DataTable'
@@ -29,12 +30,19 @@ import type {
   ScanSummary,
 } from '../types'
 
-const KNOWN_MODULES = ['tailscale', 'nmap'] as const
+const KNOWN_MODULES = ['tailscale', 'nmap', 'masscan'] as const
 const SCAN_POLL_INTERVAL_MS = 2000
 const SCAN_PAGE_SIZE = 10
 /** UI stops polling after this; agent may still run until its own nmap timeout. */
 const SCAN_POLL_MAX_MS = 2 * 60 * 60 * 1000
 const SCAN_POLL_MAX_HOURS = SCAN_POLL_MAX_MS / (60 * 60 * 1000)
+
+type GatewayDetailTab = 'overview' | 'monitoring'
+
+const GATEWAY_DETAIL_TABS: { id: GatewayDetailTab; label: string }[] = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'monitoring', label: 'Monitoring' },
+]
 
 function isGatewayOnline(gateway: Gateway): boolean {
   return gateway.status === 'online'
@@ -102,6 +110,7 @@ export function GatewayDetailPage() {
   const [scanRefreshKey, setScanRefreshKey] = useState(0)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [activeTab, setActiveTab] = useState<GatewayDetailTab>('overview')
 
   const loadGateway = useCallback(async () => {
     if (!id) {
@@ -610,6 +619,45 @@ export function GatewayDetailPage() {
         </div>
       ) : null}
 
+      <div
+        className="flex flex-wrap gap-2 border-b border-hairline pb-1"
+        role="tablist"
+        aria-label="Gateway sections"
+      >
+        {GATEWAY_DETAIL_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            className={`cursor-pointer rounded-sm px-3 py-2 text-sm font-medium transition-colors ${
+              activeTab === tab.id
+                ? 'bg-primary/15 text-primary'
+                : 'text-ink-mute-2 hover:bg-white/5 hover:text-white'
+            }`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'monitoring' ? (
+        <GatewayMonitoringPanel
+          gateway={gateway}
+          onSuccess={(message) => {
+            setActionError(null)
+            setActionMessage(message)
+          }}
+          onError={(message) => {
+            setActionMessage(null)
+            setActionError(message)
+          }}
+        />
+      ) : null}
+
+      {activeTab === 'overview' ? (
+        <>
       <section className="grid gap-4 md:grid-cols-2">
         <div className="rounded-md border border-hairline bg-canvas-night-soft p-4">
           <h3 className="mb-3 text-sm font-medium text-ink-mute-2">Details</h3>
@@ -919,6 +967,8 @@ export function GatewayDetailPage() {
           emptyMessage="No routes synced from Headscale."
         />
       </section>
+        </>
+      ) : null}
 
       {deleteConfirmOpen ? (
         <div

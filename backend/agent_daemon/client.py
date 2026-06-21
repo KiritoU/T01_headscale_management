@@ -90,6 +90,25 @@ class AgentClient:
         response.raise_for_status()
         return response.json()
 
+    def get_vuln_queue(self) -> dict[str, Any]:
+        agent_id = self._require_agent_id()
+        response = self._client.get(
+            f"{self._base_url}/api/v1/agents/{agent_id}/monitoring/vuln-queue/",
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def post_vuln_results(self, payload: dict[str, Any]) -> dict[str, Any]:
+        agent_id = self._require_agent_id()
+        response = self._client.post(
+            f"{self._base_url}/api/v1/agents/{agent_id}/monitoring/vuln-results/",
+            json=payload,
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        return response.json()
+
     def close(self) -> None:
         if self._owns_client:
             self._client.close()

@@ -527,6 +527,12 @@ class MockGatewayServer:
             self.acks.append({"command_id": command_id, **ack_body})
             return httpx.Response(200, json={"ok": True})
 
+        if request.method == "GET" and request.url.path.endswith("/monitoring/vuln-queue/"):
+            return httpx.Response(200, json={"parallel_workers": 4, "targets": []})
+
+        if request.method == "POST" and request.url.path.endswith("/monitoring/vuln-results/"):
+            return httpx.Response(200, json={"ok": True})
+
         return httpx.Response(404, json={"error": "not found"})
 
 
@@ -616,7 +622,7 @@ class TestGatewayDaemon:
         assert body["subnets"][0]["live_hosts"] == 2
         assert len(body["subnets"][0]["hosts"]) == 2
 
-    def test_scan_network_target_mode_requires_nmap(self) -> None:
+    def test_scan_network_target_mode_requires_masscan(self) -> None:
         agent_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         server = MockGatewayServer(agent_id)
         transport = httpx.MockTransport(server.handler)
@@ -641,7 +647,7 @@ class TestGatewayDaemon:
         daemon.run_once()
 
         assert server.acks[0]["state"] == "failed"
-        assert "nmap module" in server.acks[0]["result"]["logs"]
+        assert "masscan module" in server.acks[0]["result"]["logs"]
 
     def test_scan_network_target_mode_with_nmap(self) -> None:
         agent_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"

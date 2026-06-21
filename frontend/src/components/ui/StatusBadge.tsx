@@ -93,7 +93,11 @@ export function OnlineIndicator({ online }: { online: boolean }) {
 const MODULE_LABELS: Record<string, string> = {
   tailscale: 'Tailscale',
   nmap: 'Nmap',
+  masscan: 'Masscan',
   docker: 'Docker',
+  'vuln-nse-pack': 'Vuln NSE',
+  'iot-probes': 'IoT probes',
+  nuclei: 'Nuclei',
 }
 
 export function ModuleBadge({ moduleName }: { moduleName: string }) {
@@ -101,7 +105,7 @@ export function ModuleBadge({ moduleName }: { moduleName: string }) {
   const variant: BadgeVariant =
     moduleName === 'tailscale'
       ? 'success'
-      : moduleName === 'nmap'
+      : moduleName === 'nmap' || moduleName === 'masscan'
         ? 'info'
         : moduleName === 'docker'
           ? 'info'
@@ -124,5 +128,30 @@ export function BooleanBadge({
       label={value ? trueLabel : falseLabel}
       variant={value ? 'success' : 'danger'}
     />
+  )
+}
+
+const installStatusVariants = {
+  installed: 'success',
+  pending: 'warning',
+  missing: 'danger',
+} as const satisfies Record<string, BadgeVariant>
+
+export function MonitorModuleStatusBadge({
+  moduleId,
+  status,
+}: {
+  moduleId: string
+  status: keyof typeof installStatusVariants
+}) {
+  const label = MODULE_LABELS[moduleId] ?? moduleId
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <StatusBadge label={label} variant="neutral" />
+      <StatusBadge
+        label={status}
+        variant={installStatusVariants[status]}
+      />
+    </span>
   )
 }

@@ -7,6 +7,9 @@ from django.urls import include, path
 
 from accounts.urls import admin_urlpatterns, auth_urlpatterns
 from core.scripts import gateway_agent_script, worker_agent_script
+from gateways.bundles import ensure_gateway_bundles, gateway_module_bundle
+
+ensure_gateway_bundles()
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -19,6 +22,18 @@ urlpatterns = [
     path("api/gateways/", include("gateways.urls")),
     path("gateway-agent.sh", gateway_agent_script, name="gateway-agent-script"),
     path("worker-agent.sh", worker_agent_script, name="worker-agent-script"),
+    path(
+        "gateway-vuln-nse-pack.tar.gz",
+        gateway_module_bundle,
+        {"bundle_name": "gateway-vuln-nse-pack.tar.gz"},
+        name="gateway-vuln-nse-pack",
+    ),
+    path(
+        "gateway-iot-probes.tar.gz",
+        gateway_module_bundle,
+        {"bundle_name": "gateway-iot-probes.tar.gz"},
+        name="gateway-iot-probes",
+    ),
 ]
 
 _serve_openapi = (

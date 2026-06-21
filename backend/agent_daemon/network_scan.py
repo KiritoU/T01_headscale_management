@@ -24,6 +24,7 @@ class ScanHost:
     hostname: str
     mac: str
     status: str
+    open_ports: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -192,6 +193,7 @@ def subnet_to_dict(subnet: ScanSubnetResult) -> dict[str, Any]:
                 "hostname": host.hostname,
                 "mac": host.mac,
                 "status": host.status,
+                "open_ports": list(host.open_ports),
             }
             for host in subnet.hosts
         ]

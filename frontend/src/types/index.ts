@@ -285,3 +285,118 @@ export interface TailscaleUpOptions {
   accept_dns: boolean
   reset: boolean
 }
+
+export type MonitorScanStrategy = 'rotating_chunks' | 'full_sweep'
+
+export type MonitorModuleInstallStatus = 'installed' | 'pending' | 'missing'
+
+export interface MonitorModuleStatus {
+  module_id: string
+  status: MonitorModuleInstallStatus
+}
+
+export interface GatewayMonitorPolicy {
+  enabled: boolean
+  monitored_cidrs: string[]
+  scan_strategy: MonitorScanStrategy
+  chunk_count: number
+  discover_interval_minutes: number
+  vuln_rescan_days: number
+  vuln_scan_enabled: boolean
+  vuln_parallel_workers: number
+  vuln_modules: string[]
+  nuclei_enabled: boolean
+  chunk_cursor: number
+  last_scheduled_at: string | null
+  min_interval_minutes: number
+  full_coverage_hours: number | null
+  module_statuses: MonitorModuleStatus[]
+}
+
+export interface GatewayMonitorPolicyPatch {
+  enabled?: boolean
+  monitored_cidrs?: string[]
+  scan_strategy?: MonitorScanStrategy
+  chunk_count?: number
+  discover_interval_minutes?: number
+  vuln_rescan_days?: number
+  vuln_scan_enabled?: boolean
+  vuln_parallel_workers?: number
+  vuln_modules?: string[]
+  nuclei_enabled?: boolean
+}
+
+export interface DiscoveredHost {
+  id: string
+  ip: string
+  hostname: string
+  mac: string
+  first_seen_at: string
+  last_seen_at: string
+  is_new: boolean
+  last_vuln_scan_at: string | null
+  vuln_scan_pending: boolean
+  open_ports?: number[]
+}
+
+export interface MonitorAlert {
+  id: string
+  alert_type: string
+  host_ip: string
+  message: string
+  created_at: string
+  acknowledged_at: string | null
+}
+
+export type VulnSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info'
+
+export interface VulnFinding {
+  id: string
+  host_ip: string
+  source: string
+  severity: VulnSeverity
+  title: string
+  finding_id: string
+  details: Record<string, unknown>
+  found_at: string
+}
+
+export interface EnsureMonitoringModulesResult {
+  ready: boolean
+  policy: GatewayMonitorPolicy
+}
+
+export interface GatewayMonitoringScanResult {
+  command_id: string
+  targets: string[]
+  state: string
+}
+
+export interface GatewayMonitoringVulnRescanResult {
+  queued_count: number
+  hosts: string[]
+}
+
+export interface PaginationMeta {
+  total: number
+  page: number
+  limit: number
+  pages: number
+}
+
+export interface PaginatedResult<T> {
+  items: T[]
+  meta: PaginationMeta
+}
+
+export interface GatewayMonitoringListParams {
+  page?: number
+  limit?: number
+  ip?: string
+  is_new?: string
+  vuln_scan_pending?: string
+  host_ip?: string
+  alert_type?: string
+  severity?: string
+  source?: string
+}

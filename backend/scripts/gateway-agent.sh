@@ -118,45 +118,29 @@ cat > "${INSTALL_DIR}/gateway-agent.env" <<EOF
 CONTROL_PLANE_URL=${CONTROL_PLANE_URL}
 AGENT_ID=${AGENT_ID}
 AGENT_TOKEN=${AGENT_TOKEN}
+POLL_INTERVAL=${POLL_INTERVAL:-15}
 EOF
 chmod 600 "${INSTALL_DIR}/gateway-agent.env"
 
 if command -v systemctl >/dev/null 2>&1 && [[ "$(id -u)" -eq 0 ]]; then
-  UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
-
-  if [[ -n "${UNIT_TEMPLATE:-}" && -f "${UNIT_TEMPLATE}" ]]; then
-    sed \
-      -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" \
-      -e "s|@SERVICE_NAME@|${SERVICE_NAME}|g" \
-      -e "s|@RUNNER@|${RUNNER}|g" \
-      "${UNIT_TEMPLATE}" > "${UNIT_PATH}"
-  else
-    cat > "${UNIT_PATH}" <<EOF
-[Unit]
-Description=Headscale Gateway Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-EnvironmentFile=${INSTALL_DIR}/gateway-agent.env
-Environment=PYTHONPATH=${INSTALL_DIR}
-WorkingDirectory=${INSTALL_DIR}
-ExecStart=${INSTALL_DIR}/.venv/bin/python -m agent_daemon.gateway_daemon
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
+  INSTALL_SYSTEMD="${SCRIPT_DIR}/install-gateway-agent-systemd.sh"
+  if [[ ! -x "${INSTALL_SYSTEMD}" ]]; then
+    chmod +x "${INSTALL_SYSTEMD}"
   fi
-
-  systemctl daemon-reload
-  systemctl enable "${SERVICE_NAME}"
-  systemctl restart "${SERVICE_NAME}"
-  echo "Gateway agent enrolled (${AGENT_ID}) and service ${SERVICE_NAME} started."
+  "${INSTALL_SYSTEMD}" \
+    --install-dir "${INSTALL_DIR}" \
+    --runner "${RUNNER}" \
+    --env-file "${INSTALL_DIR}/gateway-agent.env" \
+    --template "${UNIT_TEMPLATE:-${SCRIPT_DIR}/gateway-agent.service.template}" \
+    --service-name "${SERVICE_NAME}"
+  echo "Gateway agent enrolled (${AGENT_ID}) and service ${SERVICE_NAME} enabled on boot."
 else
-  echo "Gateway agent enrolled (${AGENT_ID}). Start manually:"
+  echo "Gateway agent enrolled (${AGENT_ID}). Install systemd service as root:"
+  echo "  sudo ${SCRIPT_DIR}/install-gateway-agent-systemd.sh \\"
+  echo "    --install-dir ${INSTALL_DIR} \\"
+  echo "    --runner ${RUNNER} \\"
+  echo "    --env-file ${INSTALL_DIR}/gateway-agent.env"
+  echo "Or start manually:"
   echo "  set -a && source ${INSTALL_DIR}/gateway-agent.env && set +a"
   echo "  PYTHONPATH=${INSTALL_DIR} ${RUNNER} -m agent_daemon.gateway_daemon"
 fi
