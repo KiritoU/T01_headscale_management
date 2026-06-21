@@ -77,6 +77,29 @@ def main() -> int:
     agent_script = client.get("/gateway-agent.sh")
     check("gateway-agent.sh", agent_script.status_code == 200 and "bash" in agent_script.text[:20].lower())
 
+    worker_script = client.get("/worker-agent.sh")
+    check("worker-agent.sh", worker_script.status_code == 200 and "bash" in worker_script.text[:20].lower())
+
+    config = client.get("/api/config/")
+    config_data = config.json().get("data", {})
+    check(
+        "public config",
+        config.status_code == 200 and bool(config_data.get("public_base_url")),
+        config_data.get("public_base_url", ""),
+    )
+
+    bundle = client.get("/api/workers/agent-daemon-bundle.tar.gz")
+    check("agent daemon bundle", bundle.status_code == 200 and len(bundle.content) > 100)
+
+    workers = client.get("/api/workers/")
+    workers_body = workers.json()
+    workers_ok = workers.status_code == 200 and (
+        workers_body.get("success") is True
+        if isinstance(workers_body, dict)
+        else isinstance(workers_body, list)
+    )
+    check("workers list", workers_ok)
+
     print()
     if failures:
         print(f"Smoke test failed: {', '.join(failures)}")

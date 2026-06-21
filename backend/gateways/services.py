@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from django.db import transaction
@@ -41,7 +41,10 @@ def create_enrollment_token(
     *,
     max_uses: int = 1,
     expires_at: datetime | None = None,
+    expires_in_minutes: int = 60,
 ) -> EnrollmentTokenCredentials:
+    if expires_at is None:
+        expires_at = timezone.now() + timedelta(minutes=expires_in_minutes)
     random_part = secrets.token_urlsafe(ENROLL_TOKEN_RANDOM_BYTES)
     raw_token = f"{ENROLL_TOKEN_PREFIX}{random_part}"
     prefix = raw_token[:8]

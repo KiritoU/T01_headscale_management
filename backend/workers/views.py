@@ -16,6 +16,7 @@ from accounts.permissions import (
 )
 from agents.liveness import mark_stale_workers_and_gateways_offline
 from agents.serializers import AgentCommandResponseSerializer
+from core.public_url import build_agent_install_curl
 from core.responses import api_envelope
 from workers.bundle import build_agent_daemon_tarball
 from workers.models import Worker
@@ -144,6 +145,11 @@ class WorkerEnrollmentTokenCreateView(APIView):
                     "worker_id": creds.worker_id,
                     "expires_at": creds.expires_at,
                     "name": data["name"],
+                    "install_command": build_agent_install_curl(
+                        request,
+                        script_name="worker-agent.sh",
+                        token=creds.raw_token,
+                    ),
                 },
             ),
             status=status.HTTP_201_CREATED,

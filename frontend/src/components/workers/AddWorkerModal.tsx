@@ -1,10 +1,9 @@
 import { Copy, Loader2, Server, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '../ui/Button'
-import { api, getApiBaseUrl } from '../../lib/api'
+import { api } from '../../lib/api'
 import { copyToClipboard } from '../../lib/clipboard'
 import {
-  buildWorkerEnrollmentCurl,
   formatExpiryCountdown,
 } from '../../lib/format'
 import type { WorkerEnrollmentToken } from '../../types'
@@ -110,7 +109,7 @@ export function AddWorkerModal({
     setCopying(true)
     setCopyMessage(null)
     try {
-      const curl = buildWorkerEnrollmentCurl(getApiBaseUrl(), enrollment.token)
+      const curl = enrollment.install_command
       await copyToClipboard(curl)
       setCopied(true)
       setCopyMessage('Install command copied to clipboard.')
@@ -129,9 +128,7 @@ export function AddWorkerModal({
     return null
   }
 
-  const curlCommand = enrollment
-    ? buildWorkerEnrollmentCurl(getApiBaseUrl(), enrollment.token)
-    : ''
+  const curlCommand = enrollment?.install_command ?? ''
 
   return (
     <div

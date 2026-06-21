@@ -15,6 +15,41 @@ def test_gateway_agent_script_served(client):
     assert "POLL_INTERVAL" in body
 
 
+def test_gateway_agent_script_injects_token_and_control_plane_url(client, settings):
+    settings.PUBLIC_BASE_URL = "https://control.example.com"
+    response = client.get(
+        reverse("gateway-agent-script"),
+        {"token": "enrl_testtoken123"},
+    )
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "# __INJECTED_BY_CONTROL_PLANE__" in body
+    assert 'CONTROL_PLANE_URL="https://control.example.com"' in body
+    assert 'ENROLL_TOKEN="enrl_testtoken123"' in body
+
+
+def test_worker_agent_script_injects_token(client, settings):
+    settings.PUBLIC_BASE_URL = "http://127.0.0.1:8081"
+    response = client.get(
+        reverse("worker-agent-script"),
+        {"token": "wrk_testtoken456"},
+    )
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert 'ENROLL_TOKEN="wrk_testtoken456"' in body
+    assert 'CONTROL_PLANE_URL="http://127.0.0.1:8081"' in body
+
+
+def test_agent_script_rejects_invalid_token(client):
+    response = client.get(
+        reverse("gateway-agent-script"),
+        {"token": "bad token with spaces"},
+    )
+    assert response.status_code == 400
+
+
 def test_gateway_agent_script_missing_returns_503(client):
     from unittest.mock import patch
 

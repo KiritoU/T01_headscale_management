@@ -30,6 +30,7 @@ services:
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,6 +47,7 @@ services:
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,6 +61,8 @@ services:
         "while true; do uv run python manage.py run_gateway_monitor_scheduler; sleep 60; done",
       ]
     working_dir: /app/backend
+    healthcheck:
+      disable: true
     networks:
       - app
 

@@ -15,6 +15,7 @@ from accounts.permissions import (
 from accounts.scoping import build_scope_q, effective_access
 from agents.liveness import mark_stale_workers_and_gateways_offline
 from agents.models import AgentCommand
+from core.public_url import build_agent_install_curl
 from core.responses import api_envelope
 from gateways.models import Gateway
 from gateways.serializers import (
@@ -67,6 +68,11 @@ class EnrollmentTokenCreateView(APIView):
                     "prefix": creds.prefix,
                     "max_uses": creds.max_uses,
                     "expires_at": creds.expires_at,
+                    "install_command": build_agent_install_curl(
+                        request,
+                        script_name="gateway-agent.sh",
+                        token=creds.raw_token,
+                    ),
                 },
             ),
             status=status.HTTP_201_CREATED,

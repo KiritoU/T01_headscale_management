@@ -1,9 +1,8 @@
 import { Copy, Loader2, Network, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '../ui/Button'
-import { api, getApiBaseUrl } from '../../lib/api'
+import { api } from '../../lib/api'
 import { copyToClipboard } from '../../lib/clipboard'
-import { buildEnrollmentCurl } from '../../lib/format'
 import type { EnrollmentTokenResult, Tenant } from '../../types'
 
 interface AddGatewayModalProps {
@@ -99,7 +98,7 @@ export function AddGatewayModal({
     setCopying(true)
     setCopyMessage(null)
     try {
-      const curl = buildEnrollmentCurl(getApiBaseUrl(), enrollment.token)
+      const curl = enrollment.install_command
       await copyToClipboard(curl)
       setCopyMessage('Install command copied to clipboard.')
     } catch {
@@ -114,9 +113,7 @@ export function AddGatewayModal({
   }
 
   const selectedTenant = tenants.find((tenant) => tenant.id === tenantId)
-  const curlCommand = enrollment
-    ? buildEnrollmentCurl(getApiBaseUrl(), enrollment.token)
-    : ''
+  const curlCommand = enrollment?.install_command ?? ''
 
   return (
     <div

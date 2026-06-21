@@ -11,9 +11,9 @@ import {
   ModuleBadge,
   OnlineIndicator,
 } from '../components/ui/StatusBadge'
-import { api, getApiBaseUrl } from '../lib/api'
+import { api } from '../lib/api'
 import { copyToClipboard } from '../lib/clipboard'
-import { buildEnrollmentCurl, formatDateTime } from '../lib/format'
+import { formatDateTime } from '../lib/format'
 import {
   mergeScanSummaries,
   parseScanResult,
@@ -412,8 +412,7 @@ export function GatewayDetailPage() {
     setActionMessage(null)
     try {
       const tokenResult = await api.createEnrollmentToken(gateway.tenant_id)
-      const curl = buildEnrollmentCurl(getApiBaseUrl(), tokenResult.token)
-      await copyToClipboard(curl)
+      await copyToClipboard(tokenResult.install_command)
       setActionMessage('Enrollment curl command copied to clipboard.')
     } catch (err) {
       setActionError(

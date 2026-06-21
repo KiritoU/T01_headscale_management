@@ -102,6 +102,7 @@ export interface WorkerEnrollmentToken {
   worker_id: string
   expires_at: string | null
   name: string
+  install_command: string
 }
 
 export interface TenantActionResult {
@@ -209,6 +210,7 @@ export interface EnrollmentTokenResult {
   prefix: string
   max_uses: number
   expires_at: string | null
+  install_command: string
 }
 
 export interface ScanHost {

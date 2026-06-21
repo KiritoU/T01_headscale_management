@@ -127,21 +127,35 @@ See [`.env.example`](.env.example) for the full list. Key variables:
 
 Agents are **not** part of the Compose stack. They run on gateway/worker hosts and call the control plane over HTTP(S).
 
-**Gateway agent example** (after enrolling a gateway in the UI):
+### One-line enrollment (recommended)
+
+In the UI (**Workers → Add worker** or **Gateways → Enroll gateway**), copy the generated command. It looks like:
 
 ```bash
-export CONTROL_PLANE_URL=http://YOUR_HOST:8080   # or https://your-domain
-export AGENT_ID=<uuid-from-enrollment>
-export AGENT_TOKEN=<token-from-enrollment>
-export POLL_INTERVAL=5
-
-# Install script served by the control plane:
-curl -fsSL "${CONTROL_PLANE_URL}/gateway-agent.sh?token=${ENROLLMENT_TOKEN}" | bash
+curl -fsSL "http://YOUR_HOST:8080/gateway-agent.sh?token=enrl_..." | bash
 ```
 
-For production, use systemd (see `backend/scripts/install-gateway-agent-systemd.sh`).
+Run that **as root** on the target Linux host. The control plane injects `CONTROL_PLANE_URL` and `ENROLL_TOKEN` into the script when it is downloaded — no manual `.env` editing on the agent host.
 
-Point `CONTROL_PLANE_URL` at the **same URL users use for the UI** (the `web` service), not the internal `backend:8000` hostname.
+The install script will:
+
+1. Install Python venv dependencies (`python3-venv` on Debian/Ubuntu if missing)
+2. Download the agent daemon bundle from the control plane
+3. Register the agent and write `/opt/headscale-*-agent/*.env` with credentials
+4. Install and start a systemd service (when run as root)
+
+### Production: set `PUBLIC_BASE_URL`
+
+In `.env`, set the URL that **remote workers/gateways can reach** (not `localhost` unless agents run on the same machine):
+
+```bash
+PUBLIC_BASE_URL=https://control.example.com
+# or http://203.0.113.10:8080
+```
+
+Also add that host to `DJANGO_ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`. The UI uses `PUBLIC_BASE_URL` when generating enrollment curl commands.
+
+For production, agents install systemd units automatically (see `backend/scripts/install-gateway-agent-systemd.sh`).
 
 ## Local development (without full Docker)
 

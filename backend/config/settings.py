@@ -10,6 +10,10 @@ load_dotenv(BASE_DIR / ".env")
 
 APP_VERSION = os.environ.get("APP_VERSION", "0.1.0")
 
+# Public URL reachable by workers/gateways (e.g. http://203.0.113.10:8080).
+# Used for enrollment curl commands and install script injection.
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+
 _running_tests = "pytest" in sys.modules or os.environ.get("DJANGO_TEST") == "1"
 
 from core.checks import INSECURE_DEV_SECRET_KEY  # noqa: E402

@@ -22,7 +22,7 @@ export function formatHostUrl(
 
 export function buildEnrollmentCurl(apiBaseUrl: string, token: string): string {
   const base = apiBaseUrl.replace(/\/$/, '')
-  return `curl -fsSL "${base}/gateway-agent.sh?token=${encodeURIComponent(token)}" | CONTROL_PLANE_URL="${base}" ENROLL_TOKEN="${token}" bash`
+  return `curl -fsSL "${base}/gateway-agent.sh?token=${encodeURIComponent(token)}" | bash`
 }
 
 export function buildWorkerEnrollmentCurl(
@@ -30,7 +30,7 @@ export function buildWorkerEnrollmentCurl(
   token: string,
 ): string {
   const base = apiBaseUrl.replace(/\/$/, '')
-  return `curl -fsSL "${base}/worker-agent.sh?token=${encodeURIComponent(token)}" | CONTROL_PLANE_URL="${base}" ENROLL_TOKEN="${token}" bash`
+  return `curl -fsSL "${base}/worker-agent.sh?token=${encodeURIComponent(token)}" | bash`
 }
 
 export function formatExpiryCountdown(

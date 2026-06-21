@@ -1,14 +1,8 @@
 #!/usr/bin/env bash
 # Gateway agent install script (core only) — enrolls via token and starts polling daemon.
 #
-# Remote install:
-#   curl -fsSL "${CONTROL_PLANE_URL}/gateway-agent.sh?token=TOKEN" \
-#     | CONTROL_PLANE_URL="${CONTROL_PLANE_URL}" ENROLL_TOKEN="TOKEN" bash
-#
-# CONTROL_PLANE_URL — API base URL (must reach /api/v1/agents/register/).
-#   Dev (Vite :5173): same origin as the script URL works; Vite proxies /api to Django :8000.
-#   Production: use the Django/nginx host (e.g. https://control.example.com or http://host:8000).
-# Optional INSTALL_FROM_URL — when CONTROL_PLANE_URL is unset, derive origin from the curl URL.
+# Remote install (one-liner — token and URL injected by control plane when fetched with ?token=):
+#   curl -fsSL "${CONTROL_PLANE_URL}/gateway-agent.sh?token=TOKEN" | bash
 set -euo pipefail
 
 CONTROL_PLANE_URL="${CONTROL_PLANE_URL:-}"
@@ -19,15 +13,18 @@ SERVICE_NAME="${SERVICE_NAME:-headscale-gateway-agent}"
 if [[ -z "${CONTROL_PLANE_URL}" && -n "${INSTALL_FROM_URL:-}" ]]; then
   CONTROL_PLANE_URL="$(printf '%s' "${INSTALL_FROM_URL}" | sed -E 's#(https?://[^/?#]+).*#\1#')"
 fi
-CONTROL_PLANE_URL="${CONTROL_PLANE_URL:-https://get.example.com}"
 
-# Parse ?token= from curl URL when piped (best-effort stub via QUERY_STRING env if set)
 if [[ -z "${ENROLL_TOKEN}" && -n "${QUERY_STRING:-}" ]]; then
   ENROLL_TOKEN="$(printf '%s' "${QUERY_STRING}" | sed -n 's/.*[?&]token=\([^&]*\).*/\1/p')"
 fi
 
 if [[ -z "${ENROLL_TOKEN}" ]]; then
   echo "ENROLL_TOKEN is required (env ENROLL_TOKEN or ?token= query)" >&2
+  exit 1
+fi
+
+if [[ -z "${CONTROL_PLANE_URL}" ]]; then
+  echo "CONTROL_PLANE_URL is required (set by control plane install script or env)" >&2
   exit 1
 fi
 
@@ -50,9 +47,16 @@ if [[ -n "${SCRIPT_DIR}" && -d "${SCRIPT_DIR}/../agent_daemon" ]]; then
   fi
 else
   echo "Downloading agent daemon bundle…"
-  curl -fsSL \
-    "${CONTROL_PLANE_URL%/}/api/workers/agent-daemon-bundle.tar.gz" \
-    | tar -xzf - -C "${INSTALL_DIR}"
+  BUNDLE_URL="${CONTROL_PLANE_URL%/}/api/workers/agent-daemon-bundle.tar.gz"
+  TMP_BUNDLE="$(mktemp)"
+  if ! curl -fsSL "${BUNDLE_URL}" -o "${TMP_BUNDLE}"; then
+    echo "Failed to download agent bundle from ${BUNDLE_URL}" >&2
+    echo "Ensure the control plane is reachable and /api/workers/agent-daemon-bundle.tar.gz is available." >&2
+    rm -f "${TMP_BUNDLE}"
+    exit 1
+  fi
+  tar -xzf "${TMP_BUNDLE}" -C "${INSTALL_DIR}"
+  rm -f "${TMP_BUNDLE}"
   UNIT_TEMPLATE=""
 fi
 
