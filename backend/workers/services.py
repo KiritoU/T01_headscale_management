@@ -22,6 +22,7 @@ WORKER_COMMANDS = frozenset(
         "provision_tenant",
         "start_tenant",
         "stop_tenant",
+        "deprovision_tenant",
     },
 )
 

@@ -99,6 +99,33 @@ class TestWorkerTenantServices:
         assert all(tenant.runtime_status == RuntimeStatus.PENDING for tenant in tenants)
         assert all(tenant.worker_id == ready_worker.id for tenant in tenants)
 
+    def test_bulk_create_single_tenant_without_number(self, ready_worker):
+        tenants = bulk_create_tenants(
+            ready_worker,
+            suffix="soc",
+            base_domain="example.com",
+        )
+
+        assert len(tenants) == 1
+        tenant = tenants[0]
+        assert tenant.slug == "soc"
+        assert tenant.db_name == "hs_soc"
+        assert tenant.headscale_host == "headscale-soc.example.com"
+        assert tenant.headplane_host == "headplane-soc.example.com"
+        assert tenant.desired_config["dns"]["magic_dns_base"] == "tailnet-soc.example.com"
+
+    def test_bulk_create_tenants_with_description(self, ready_worker):
+        tenants = bulk_create_tenants(
+            ready_worker,
+            suffix="team",
+            start_number=1,
+            count=2,
+            base_domain="example.com",
+            description="Lab tenants",
+        )
+
+        assert all(tenant.description == "Lab tenants" for tenant in tenants)
+
     def test_enqueue_provision_sets_runtime_status_and_config_refs(
         self,
         pending_tenant,
@@ -119,8 +146,7 @@ class TestWorkerTenantServices:
         assert isinstance(stored.payload["compose_snippet"], str)
         assert "headscale-team-1:" in stored.payload["compose_snippet"]
         assert stored.payload["login_server"] == "http://headscale-team-1.example.com"
-        assert stored.payload["client_scripts"]["linux.sh"]
-        assert stored.payload["client_scripts"]["gateway.sh"]
+        assert "client_scripts" not in stored.payload
 
     def test_enqueue_provision_skips_duplicate_pending(self, pending_tenant):
         first = enqueue_provision_tenant(pending_tenant)
@@ -188,13 +214,47 @@ class TestWorkerTenantServices:
 
         assert not Tenant.objects.filter(id=tenant_id).exists()
 
-    def test_remove_running_tenant_enqueues_stop(self, ready_worker, pending_tenant):
+    def test_remove_running_tenant_enqueues_deprovision(self, ready_worker, pending_tenant):
         Tenant.objects.filter(pk=pending_tenant.pk).update(runtime_status=RuntimeStatus.RUNNING)
 
-        remove_tenant(ready_worker, pending_tenant)
+        result = remove_tenant(ready_worker, pending_tenant)
 
-        assert AgentCommand.objects.filter(command="stop_tenant").exists()
+        assert result.removed_immediately is False
+        assert result.command is not None
+        assert result.command.command == "deprovision_tenant"
+        assert AgentCommand.objects.filter(command="deprovision_tenant").exists()
+        assert Tenant.objects.filter(id=pending_tenant.id).exists()
+        pending_tenant.refresh_from_db()
+        assert pending_tenant.runtime_status == RuntimeStatus.DELETING
+
+    def test_sync_deprovision_deletes_tenant_on_ack(self, ready_worker, pending_tenant):
+        Tenant.objects.filter(pk=pending_tenant.pk).update(runtime_status=RuntimeStatus.RUNNING)
+        remove_tenant(ready_worker, pending_tenant)
+        stored = AgentCommand.objects.get(command="deprovision_tenant")
+        ack_command(
+            stored,
+            state=CommandState.ACKED,
+            result={"exit_code": 0, "runtime_status": "deprovisioned"},
+        )
+
+        sync_tenant_from_acked_command(stored)
+
         assert not Tenant.objects.filter(id=pending_tenant.id).exists()
+
+    def test_sync_deprovision_marks_failed_on_agent_failure(self, ready_worker, pending_tenant):
+        Tenant.objects.filter(pk=pending_tenant.pk).update(runtime_status=RuntimeStatus.RUNNING)
+        remove_tenant(ready_worker, pending_tenant)
+        stored = AgentCommand.objects.get(command="deprovision_tenant")
+        ack_command(
+            stored,
+            state=CommandState.FAILED,
+            result={"exit_code": 1, "logs": "deprovision failed"},
+        )
+
+        sync_tenant_from_acked_command(stored)
+
+        pending_tenant.refresh_from_db()
+        assert pending_tenant.runtime_status == RuntimeStatus.FAILED
 
     def test_sync_tenant_runtime_from_command(self, pending_tenant, ready_worker):
         command = enqueue_provision_tenant(pending_tenant)
@@ -299,6 +359,43 @@ class TestWorkerTenantApi:
         body = response.json()
         assert body["success"] is True
         assert [item["slug"] for item in body["data"]] == ["api-10", "api-11"]
+
+    def test_bulk_create_single_tenant_api(self, client, ready_worker):
+        response = client.post(
+            reverse("worker-tenant-bulk-create", kwargs={"worker_id": ready_worker.id}),
+            data={
+                "suffix": "soc",
+                "base_domain": "example.com",
+                "description": "Single SOC tenant",
+            },
+            content_type="application/json",
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["success"] is True
+        assert len(body["data"]) == 1
+        assert body["data"][0]["slug"] == "soc"
+        assert body["data"][0]["db_name"] == "hs_soc"
+        assert body["data"][0]["description"] == "Single SOC tenant"
+
+    def test_patch_tenant_description(self, client, ready_worker, pending_tenant, admin_user):
+        client.force_login(admin_user)
+        response = client.patch(
+            reverse(
+                "worker-tenant-detail",
+                kwargs={"worker_id": ready_worker.id, "tenant_id": pending_tenant.id},
+            ),
+            data={"description": "Updated note"},
+            content_type="application/json",
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert body["data"]["description"] == "Updated note"
+        pending_tenant.refresh_from_db()
+        assert pending_tenant.description == "Updated note"
 
     def test_bulk_create_rejects_duplicate_slug(self, client, ready_worker):
         Tenant.objects.create(
@@ -512,6 +609,24 @@ class TestWorkerTenantApi:
 
         assert response.status_code == 204
         assert not Tenant.objects.filter(id=pending_tenant.id).exists()
+
+    def test_delete_running_tenant_returns_202(self, client, ready_worker, pending_tenant):
+        Tenant.objects.filter(pk=pending_tenant.pk).update(runtime_status=RuntimeStatus.RUNNING)
+
+        response = client.delete(
+            reverse(
+                "worker-tenant-detail",
+                kwargs={"worker_id": ready_worker.id, "tenant_id": pending_tenant.id},
+            ),
+        )
+
+        assert response.status_code == 202
+        body = response.json()
+        assert body["success"] is True
+        assert body["data"]["command"] == "deprovision_tenant"
+        assert body["data"]["runtime_status"] == RuntimeStatus.DELETING
+        pending_tenant.refresh_from_db()
+        assert pending_tenant.runtime_status == RuntimeStatus.DELETING
 
     def test_command_poll_updates_runtime_status(self, client, ready_worker, pending_tenant):
         provision = client.post(

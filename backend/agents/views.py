@@ -25,6 +25,8 @@ from agents.serializers import (
     AgentRegisterSerializer,
 )
 from agents.services import ack_command, dispatch_commands
+from agents.metrics_service import record_resource_sample
+from core.request_ip import get_client_ip
 from workers.tenant_services import sync_tenant_from_acked_command
 from core.responses import api_envelope
 from gateways.models import Gateway, GatewayStatus
@@ -72,17 +74,16 @@ class AgentHeartbeatView(APIView):
             updates["tenant_inventory"] = data["tenant_inventory"]
         Agent.objects.filter(id=agent.id).update(**updates)
 
+        client_ip = get_client_ip(request)
+        worker_updates: dict[str, object] = {
+            "last_heartbeat_at": now,
+            "status": WorkerStatus.ONLINE,
+        }
         if "docker_reachable" in data:
-            Worker.objects.filter(agent_id=agent.id).update(
-                docker_reachable=data["docker_reachable"],
-                last_heartbeat_at=now,
-                status=WorkerStatus.ONLINE,
-            )
-        else:
-            Worker.objects.filter(agent_id=agent.id).update(
-                last_heartbeat_at=now,
-                status=WorkerStatus.ONLINE,
-            )
+            worker_updates["docker_reachable"] = data["docker_reachable"]
+        if client_ip:
+            worker_updates["public_ip"] = client_ip
+        Worker.objects.filter(agent_id=agent.id).update(**worker_updates)
 
         Gateway.objects.filter(agent_id=agent.id).update(
             last_heartbeat_at=now,
@@ -95,6 +96,9 @@ class AgentHeartbeatView(APIView):
                 name=module_data["module_id"],
                 defaults={"installed_at": now},
             )
+
+        if "metrics" in data:
+            record_resource_sample(agent, data["metrics"], sampled_at=now)
 
         return Response({"ok": True})
 

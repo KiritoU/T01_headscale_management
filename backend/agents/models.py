@@ -81,3 +81,37 @@ class AgentModule(models.Model):
 
     def __str__(self) -> str:
         return f"{self.agent_id}:{self.name}"
+
+
+class ResourceSample(models.Model):
+    """Point-in-time host resource metrics reported via agent heartbeat."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent = models.ForeignKey(
+        Agent,
+        on_delete=models.CASCADE,
+        related_name="resource_samples",
+    )
+    sampled_at = models.DateTimeField(db_index=True)
+    cpu_percent = models.FloatField(null=True, blank=True)
+    mem_percent = models.FloatField(null=True, blank=True)
+    disk_percent = models.FloatField(null=True, blank=True)
+    mem_total_bytes = models.BigIntegerField(null=True, blank=True)
+    mem_used_bytes = models.BigIntegerField(null=True, blank=True)
+    disk_total_bytes = models.BigIntegerField(null=True, blank=True)
+    disk_used_bytes = models.BigIntegerField(null=True, blank=True)
+    net_rx_bytes_per_sec = models.BigIntegerField(null=True, blank=True)
+    net_tx_bytes_per_sec = models.BigIntegerField(null=True, blank=True)
+    load_avg_1m = models.FloatField(null=True, blank=True)
+    cpu_count = models.PositiveIntegerField(null=True, blank=True)
+    uptime_seconds = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-sampled_at"]
+        indexes = [
+            models.Index(fields=["agent", "sampled_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.agent_id}@{self.sampled_at}"

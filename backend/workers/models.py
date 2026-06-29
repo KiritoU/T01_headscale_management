@@ -34,6 +34,23 @@ class Worker(models.Model):
         help_text="Reference to rotatable agent credential (not plaintext).",
     )
     docker_reachable = models.BooleanField(default=False)
+    shared_edge_traefik = models.BooleanField(
+        default=False,
+        help_text=(
+            "Use the control plane Traefik for TLS instead of a per-worker Traefik "
+            "instance (required when worker runs on the same host as the console)."
+        ),
+    )
+    public_ip = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+        help_text="Last public IP observed from the worker agent heartbeat.",
+    )
+    public_ip_override = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+        help_text="Manual override for DNS A records when auto-detection is wrong.",
+    )
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

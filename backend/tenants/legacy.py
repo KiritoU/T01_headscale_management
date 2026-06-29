@@ -10,17 +10,24 @@ from workers.models import Worker
 def legacy_tenant_metadata(
     *,
     suffix: str,
-    number: int,
+    number: int | None = None,
     base_domain: str,
     production: bool = False,
 ) -> dict:
     """Build legacy tenant field values from generate-multi-tenants.sh naming."""
     validate_suffix(suffix)
-    tenant_slug = f"{suffix}-{number}"
-    db_name = f"hs_{suffix}_{number}"
-    headscale_host = f"headscale-{tenant_slug}.{base_domain}"
-    headplane_host = f"headplane-{tenant_slug}.{base_domain}"
-    magic_dns_base = f"tailnet-{tenant_slug}.{base_domain}"
+    if number is None:
+        tenant_slug = suffix
+        db_name = f"hs_{suffix}"
+        headscale_host = f"headscale-{suffix}.{base_domain}"
+        headplane_host = f"headplane-{suffix}.{base_domain}"
+        magic_dns_base = f"tailnet-{suffix}.{base_domain}"
+    else:
+        tenant_slug = f"{suffix}-{number}"
+        db_name = f"hs_{suffix}_{number}"
+        headscale_host = f"headscale-{tenant_slug}.{base_domain}"
+        headplane_host = f"headplane-{tenant_slug}.{base_domain}"
+        magic_dns_base = f"tailnet-{tenant_slug}.{base_domain}"
 
     return {
         "slug": tenant_slug,

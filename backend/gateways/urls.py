@@ -5,6 +5,7 @@ from gateways.views import (
     GatewayCommandView,
     GatewayDetailView,
     GatewayListView,
+    GatewayMetricsView,
     GatewayRoutesView,
     GatewayTagsView,
     TailscaleConnectContextView,
@@ -22,6 +23,7 @@ from gateways.monitoring_views import (
 urlpatterns = [
     path("", GatewayListView.as_view(), name="gateway-list"),
     path("<uuid:gateway_id>/", GatewayDetailView.as_view(), name="gateway-detail"),
+    path("<uuid:gateway_id>/metrics/", GatewayMetricsView.as_view(), name="gateway-metrics"),
     path("<uuid:gateway_id>/tags/", GatewayTagsView.as_view(), name="gateway-tags"),
     path("<uuid:gateway_id>/routes/", GatewayRoutesView.as_view(), name="gateway-routes"),
     path(

@@ -27,6 +27,16 @@ def test_legacy_tenant_metadata_team_1():
     }
 
 
+def test_legacy_tenant_metadata_without_number():
+    metadata = legacy_tenant_metadata(suffix="soc", number=None, base_domain="example.com")
+
+    assert metadata["slug"] == "soc"
+    assert metadata["db_name"] == "hs_soc"
+    assert metadata["headscale_host"] == "headscale-soc.example.com"
+    assert metadata["headplane_host"] == "headplane-soc.example.com"
+    assert metadata["desired_config"]["dns"]["magic_dns_base"] == "tailnet-soc.example.com"
+
+
 def test_legacy_tenant_metadata_team_3():
     metadata = legacy_tenant_metadata(suffix="team", number=3, base_domain="vpn.example.net")
 

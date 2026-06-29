@@ -93,8 +93,36 @@ export function WorkerTenantsPage() {
   const [suffix, setSuffix] = useState('team')
   const [startNumber, setStartNumber] = useState(1)
   const [count, setCount] = useState(1)
+  const [bulkMode, setBulkMode] = useState(false)
+  const [description, setDescription] = useState('')
   const [baseDomain, setBaseDomain] = useState('')
   const [production, setProduction] = useState(false)
+  const [edgeSaving, setEdgeSaving] = useState(false)
+
+  const handleSharedEdgeToggle = async (enabled: boolean) => {
+    if (!workerId || !worker) {
+      return
+    }
+    setEdgeSaving(true)
+    setActionError(null)
+    try {
+      const updated = await api.patchWorker(workerId, {
+        shared_edge_traefik: enabled,
+      })
+      setWorker(updated)
+      setActionMessage(
+        enabled
+          ? 'Shared edge enabled — tenant TLS routes via console Traefik.'
+          : 'Shared edge disabled — worker will run its own Traefik.',
+      )
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : 'Failed to update shared edge setting',
+      )
+    } finally {
+      setEdgeSaving(false)
+    }
+  }
 
   const loadData = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -189,8 +217,12 @@ export function WorkerTenantsPage() {
     }
     const trimmedSuffix = suffix.trim()
     const trimmedDomain = baseDomain.trim()
-    if (!trimmedSuffix || !trimmedDomain || count < 1 || startNumber < 1) {
-      setActionError('Suffix, base domain, start number, and count are required.')
+    if (!trimmedSuffix || !trimmedDomain) {
+      setActionError('Suffix and base domain are required.')
+      return
+    }
+    if (bulkMode && (count < 1 || startNumber < 1)) {
+      setActionError('Start number and count are required when creating multiple tenants.')
       return
     }
 
@@ -198,13 +230,24 @@ export function WorkerTenantsPage() {
     setActionError(null)
     setActionMessage(null)
     try {
-      const created = await api.bulkCreateWorkerTenants(workerId, {
+      const body: {
+        suffix: string
+        base_domain: string
+        production: boolean
+        description?: string
+        start_number?: number
+        count?: number
+      } = {
         suffix: trimmedSuffix,
-        start_number: startNumber,
-        count,
         base_domain: trimmedDomain,
         production,
-      })
+        description: description.trim(),
+      }
+      if (bulkMode) {
+        body.start_number = startNumber
+        body.count = count
+      }
+      const created = await api.bulkCreateWorkerTenants(workerId, body)
       setActionMessage(
         `Created ${created.length} tenant${created.length === 1 ? '' : 's'} (${created.map((t) => t.slug).join(', ')}).`,
       )
@@ -254,8 +297,14 @@ export function WorkerTenantsPage() {
     setActionError(null)
     setActionMessage(null)
     try {
-      await api.removeWorkerTenant(workerId, tenant.id)
-      setActionMessage(`Removed tenant ${tenant.slug}.`)
+      const result = await api.removeWorkerTenant(workerId, tenant.id)
+      if (result?.runtime_status === 'deleting') {
+        setActionMessage(
+          `Removing ${tenant.slug} — waiting for worker to deprovision stack and scripts.`,
+        )
+      } else {
+        setActionMessage(`Removed tenant ${tenant.slug}.`)
+      }
       setConfirmDelete(null)
       await loadData({ silent: true })
     } catch (err) {
@@ -304,8 +353,13 @@ export function WorkerTenantsPage() {
         header: 'Actions',
         render: (row) => {
           const isBusy = actionLoading?.startsWith(`${row.id}:`) ?? false
+          const isDeleting = row.runtime_status === 'deleting'
           const actionDisabled =
-            isBusy || bulkProvisionLoading || deleteLoading || bulkLoading
+            isBusy ||
+            bulkProvisionLoading ||
+            deleteLoading ||
+            bulkLoading ||
+            isDeleting
 
           return (
             <div
@@ -313,15 +367,19 @@ export function WorkerTenantsPage() {
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => event.stopPropagation()}
             >
-              {(
-                [
-                  ['provision', 'Provision'],
-                  ['start', 'Start'],
-                  ['stop', 'Stop'],
-                  ['verify', 'Verify'],
-                  ['bootstrap', 'Bootstrap'],
-                ] as const
-              ).map(([action, label]) => (
+              {isDeleting ? (
+                <span className="text-xs text-ink-mute-2">Removing…</span>
+              ) : null}
+              {!isDeleting
+                ? (
+                  [
+                    ['provision', 'Provision'],
+                    ['start', 'Start'],
+                    ['stop', 'Stop'],
+                    ['verify', 'Verify'],
+                    ['bootstrap', 'Bootstrap'],
+                  ] as const
+                ).map(([action, label]) => (
                 <Button
                   key={action}
                   variant="secondary"
@@ -334,7 +392,9 @@ export function WorkerTenantsPage() {
                   ) : null}
                   {label}
                 </Button>
-              ))}
+              ))
+                : null}
+              {!isDeleting ? (
               <Button
                 variant="secondary"
                 className="px-2 py-1 text-xs text-red-200 hover:border-red-500/40 hover:bg-red-500/10"
@@ -344,6 +404,7 @@ export function WorkerTenantsPage() {
                 <Trash2 className="h-3 w-3" aria-hidden />
                 Remove
               </Button>
+              ) : null}
             </div>
           )
         },
@@ -403,6 +464,22 @@ export function WorkerTenantsPage() {
           <p className="text-sm text-ink-mute-2">
             Tenant stacks on {worker.hostname}
           </p>
+          <label className="mt-2 flex cursor-pointer items-start gap-3 rounded-sm border border-hairline bg-canvas-night px-3 py-2">
+            <input
+              type="checkbox"
+              checked={worker.shared_edge_traefik}
+              disabled={edgeSaving}
+              onChange={(event) => void handleSharedEdgeToggle(event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-hairline-strong bg-canvas-night text-primary focus:ring-primary"
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium text-white">Shared edge Traefik</span>
+              <span className="text-xs text-ink-mute-2">
+                Enable when this worker runs on the same host as the console (no
+                local Traefik on port 80/443).
+              </span>
+            </span>
+          </label>
         </div>
         <Button onClick={() => setBulkModalOpen(true)}>
           <Plus className="h-4 w-4" aria-hidden />
@@ -528,37 +605,67 @@ export function WorkerTenantsPage() {
                     className="rounded-sm border border-hairline-strong bg-canvas-night px-3 py-2 text-sm text-white focus:border-primary focus:outline-none"
                   />
                 </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="flex flex-col gap-1 text-xs text-ink-mute-2">
-                    Start number
-                    <input
-                      type="number"
-                      min={1}
-                      value={startNumber}
-                      onChange={(event) =>
-                        setStartNumber(Number(event.target.value))
-                      }
-                      className="rounded-sm border border-hairline-strong bg-canvas-night px-3 py-2 text-sm text-white focus:border-primary focus:outline-none"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs text-ink-mute-2">
-                    Count
-                    <input
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={count}
-                      onChange={(event) => setCount(Number(event.target.value))}
-                      className="rounded-sm border border-hairline-strong bg-canvas-night px-3 py-2 text-sm text-white focus:border-primary focus:outline-none"
-                    />
-                  </label>
-                </div>
+                <label className="flex cursor-pointer items-start gap-3 rounded-sm border border-hairline bg-canvas-night px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={bulkMode}
+                    onChange={(event) => setBulkMode(event.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-hairline-strong bg-canvas-night text-primary focus:ring-primary"
+                  />
+                  <span className="flex flex-col gap-1">
+                    <span className="text-sm font-medium text-white">
+                      Create multiple tenants
+                    </span>
+                    <span className="text-xs text-ink-mute-2">
+                      {bulkMode
+                        ? 'Numbered slugs like team-1, team-2, …'
+                        : 'Single tenant with slug equal to suffix only.'}
+                    </span>
+                  </span>
+                </label>
+                {bulkMode ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="flex flex-col gap-1 text-xs text-ink-mute-2">
+                      Start number
+                      <input
+                        type="number"
+                        min={1}
+                        value={startNumber}
+                        onChange={(event) =>
+                          setStartNumber(Number(event.target.value))
+                        }
+                        className="rounded-sm border border-hairline-strong bg-canvas-night px-3 py-2 text-sm text-white focus:border-primary focus:outline-none"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs text-ink-mute-2">
+                      Count
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={count}
+                        onChange={(event) => setCount(Number(event.target.value))}
+                        className="rounded-sm border border-hairline-strong bg-canvas-night px-3 py-2 text-sm text-white focus:border-primary focus:outline-none"
+                      />
+                    </label>
+                  </div>
+                ) : null}
                 <label className="flex flex-col gap-1 text-xs text-ink-mute-2">
                   Base domain
                   <input
                     value={baseDomain}
                     onChange={(event) => setBaseDomain(event.target.value)}
                     placeholder="example.com"
+                    className="rounded-sm border border-hairline-strong bg-canvas-night px-3 py-2 text-sm text-white focus:border-primary focus:outline-none"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-ink-mute-2">
+                  Description
+                  <textarea
+                    value={description}
+                    onChange={(event) => setDescription(event.target.value)}
+                    rows={2}
+                    placeholder="Optional note for this tenant (or all tenants in bulk mode)"
                     className="rounded-sm border border-hairline-strong bg-canvas-night px-3 py-2 text-sm text-white focus:border-primary focus:outline-none"
                   />
                 </label>
@@ -575,14 +682,15 @@ export function WorkerTenantsPage() {
                     </span>
                     <span className="text-xs text-ink-mute-2">
                       {production
-                        ? 'Traefik terminates TLS with Let’s Encrypt (Cloudflare DNS). Requires ACME_EMAIL and CF_DNS_API_TOKEN in the worker stack .env.'
-                        : 'Traefik listens on HTTP port 80 only. Map domains via /etc/hosts for local testing.'}
+                        ? 'HTTPS via Let’s Encrypt (Cloudflare DNS). Configure ACME email and Cloudflare token in Edge & TLS settings above.'
+                        : 'HTTP only on port 80. Map domains via /etc/hosts for local testing.'}
                     </span>
                   </span>
                 </label>
                 <p className="text-xs text-ink-mute-2">
-                  Creates slugs like {suffix.trim() || 'team'}-{startNumber} …{' '}
-                  {suffix.trim() || 'team'}-{startNumber + Math.max(count, 1) - 1}
+                  {bulkMode
+                    ? `Creates slugs like ${suffix.trim() || 'team'}-${startNumber} … ${suffix.trim() || 'team'}-${startNumber + Math.max(count, 1) - 1}`
+                    : `Creates slug ${suffix.trim() || 'team'} (headscale-${suffix.trim() || 'team'}.${baseDomain.trim() || 'example.com'})`}
                 </p>
               </div>
               <div className="flex justify-end gap-2 border-t border-hairline px-5 py-4">
@@ -638,8 +746,9 @@ export function WorkerTenantsPage() {
             </div>
             <div className="px-5 py-4">
               <p id="delete-tenant-body" className="text-sm text-ink-mute-2">
-                Permanently remove {confirmDelete.tenant.slug}? Running stacks
-                are stopped first.
+                Remove {confirmDelete.tenant.slug}? The tenant stays visible as
+                &quot;deleting&quot; until the worker finishes deprovisioning
+                containers, scripts, and database state.
               </p>
             </div>
             <div className="flex justify-end gap-2 border-t border-hairline px-5 py-4">

@@ -13,6 +13,7 @@ from typing import Any
 from agent_daemon.client import AgentClient
 from agent_daemon.docker_probe import probe_docker_reachable
 from agent_daemon.stack_provisioner import StackProvisioner
+from agent_daemon.system_metrics import SystemMetricsCollector
 from agent_daemon.tenant_lifecycle import TenantLifecycleRunner
 from lifecycle.identifiers import validate_db_name
 
@@ -25,7 +26,6 @@ DOCKER_INSTALL_SCRIPT = "curl -fsSL https://get.docker.com | sh"
 _REQUIRED_PROVISION_FIELDS = (
     "tenant_slug",
     "db_name",
-    "download_host",
     "headscale_config",
     "headplane_config",
     "compose_snippet",
@@ -60,6 +60,7 @@ class WorkerDaemon:
         docker_install_runner: Callable[[], subprocess.CompletedProcess[str]] | None = None,
         stack_provisioner: StackProvisioner | None = None,
         lifecycle_runner: TenantLifecycleRunner | None = None,
+        metrics_collector: SystemMetricsCollector | None = None,
     ) -> None:
         self._client = client
         self._poll_interval_seconds = poll_interval_seconds
@@ -67,6 +68,7 @@ class WorkerDaemon:
         self._docker_install_runner = docker_install_runner
         self._stack_provisioner = stack_provisioner or StackProvisioner()
         self._lifecycle_runner = lifecycle_runner or TenantLifecycleRunner()
+        self._metrics_collector = metrics_collector or SystemMetricsCollector()
         self._state = WorkerDaemonState()
         self._shutdown_requested = False
 
@@ -113,6 +115,7 @@ class WorkerDaemon:
             "installed_modules": modules,
             "docker_reachable": self._state.docker_reachable,
             "tenant_inventory": list(self._state.tenant_inventory),
+            "metrics": self._metrics_collector.sample(),
         }
 
     def _handle_command(self, command: dict[str, Any]) -> None:
@@ -142,6 +145,8 @@ class WorkerDaemon:
             return self._handle_start_tenant(payload)
         if command_type == "stop_tenant":
             return self._handle_stop_tenant(payload)
+        if command_type == "deprovision_tenant":
+            return self._handle_deprovision_tenant(payload)
         if command_type == "install_module":
             return self._handle_install_module(payload)
         if command_type == "shutdown":
@@ -283,6 +288,74 @@ class WorkerDaemon:
             inventory_on_success=lambda slug, inventory: tuple(
                 sorted(set(inventory) | {slug}),
             ),
+        )
+
+    def _handle_deprovision_tenant(
+        self,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], str]:
+        tenant_slug = str(payload.get("tenant_slug", "unknown"))
+        db_name = str(payload.get("db_name", "")).strip()
+        if not db_name:
+            return (
+                {
+                    "exit_code": 1,
+                    "duration_ms": 0,
+                    "logs": "deprovision_tenant: db_name is required",
+                    "runtime_status": "failed",
+                },
+                "failed",
+            )
+        try:
+            validate_db_name(db_name)
+        except ValueError as exc:
+            return (
+                {
+                    "exit_code": 1,
+                    "duration_ms": 0,
+                    "logs": f"deprovision_tenant: {exc}",
+                    "runtime_status": "failed",
+                },
+                "failed",
+            )
+
+        if not self._state.docker_reachable:
+            return (
+                {
+                    "exit_code": 1,
+                    "duration_ms": 0,
+                    "logs": "deprovision_tenant: docker is not reachable",
+                    "runtime_status": "failed",
+                },
+                "failed",
+            )
+
+        result = self._stack_provisioner.deprovision(
+            tenant_slug,
+            db_name=db_name,
+            shared_edge_docker_network=str(
+                payload.get("shared_edge_docker_network", ""),
+            ),
+        )
+        state = "acked" if result.exit_code == 0 else "failed"
+        if result.exit_code == 0:
+            self._state = WorkerDaemonState(
+                installed_modules=self._state.installed_modules,
+                docker_reachable=self._state.docker_reachable,
+                tenant_inventory=tuple(
+                    slug
+                    for slug in self._state.tenant_inventory
+                    if slug != tenant_slug
+                ),
+            )
+        return (
+            {
+                "exit_code": result.exit_code,
+                "duration_ms": result.duration_ms,
+                "logs": result.logs,
+                "runtime_status": result.runtime_status,
+            },
+            state,
         )
 
     def _handle_stop_tenant(self, payload: dict[str, Any]) -> tuple[dict[str, Any], str]:

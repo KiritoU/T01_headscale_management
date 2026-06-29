@@ -14,8 +14,10 @@ ensure_gateway_bundles()
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/auth/", include(auth_urlpatterns)),
-    path("api/admin/", include(admin_urlpatterns)),
+    # Core routes (console-settings, edge-settings, scripts) must be registered
+    # before api/admin/ so /api/admin/console-settings/ is not swallowed by accounts.
     path("api/", include("core.urls")),
+    path("api/admin/", include(admin_urlpatterns)),
     path("api/v1/", include("agents.urls")),
     path("api/tenants/", include("tenants.urls")),
     path("api/workers/", include("workers.urls")),

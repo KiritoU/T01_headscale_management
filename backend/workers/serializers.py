@@ -25,12 +25,21 @@ class WorkerSerializer(serializers.ModelSerializer):
             "status",
             "credential_ref",
             "docker_reachable",
+            "shared_edge_traefik",
+            "public_ip",
+            "public_ip_override",
             "last_heartbeat_at",
             "installed_modules",
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "created_at", "updated_at", "last_heartbeat_at")
+        read_only_fields = (
+            "id",
+            "created_at",
+            "updated_at",
+            "last_heartbeat_at",
+            "public_ip",
+        )
 
     def get_installed_modules(self, worker: Worker) -> list[str]:
         if worker.agent_id is None:
@@ -55,6 +64,7 @@ class WorkerCommandSerializer(serializers.Serializer):
             "provision_tenant",
             "start_tenant",
             "stop_tenant",
+            "deprovision_tenant",
         ],
     )
     payload = serializers.JSONField(required=False, default=dict)

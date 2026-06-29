@@ -20,7 +20,6 @@ def _minimal_provision_payload(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "tenant_slug": "team-a",
         "db_name": "hs_team_a",
-        "download_host": "download.example.com",
         "headscale_config": {"database": {"postgres": {"name": "hs_team_a"}}},
         "headplane_config": {"server": {"host": "0.0.0.0"}},
         "compose_snippet": "  headscale-team-a:\n    image: headscale/headscale:latest",
@@ -379,6 +378,61 @@ class TestWorkerDaemon:
         assert stop_calls == ["team-1"]
         assert mock_server.acks[0]["state"] == "acked"
         assert mock_server.acks[0]["result"]["runtime_status"] == "stopped"
+        assert "team-1" not in daemon.state.tenant_inventory
+
+    def test_deprovision_tenant_runs_stack_deprovision(
+        self,
+        agent_client: AgentClient,
+        mock_server: MockAgentServer,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        deprovision_calls: list[tuple[str, str]] = []
+
+        class FakeProvisioner:
+            def deprovision(
+                self,
+                tenant_slug: str,
+                *,
+                db_name: str,
+                shared_edge_docker_network: str = "",
+            ) -> TenantRuntimeResult:
+                deprovision_calls.append((tenant_slug, db_name))
+                return TenantRuntimeResult(
+                    exit_code=0,
+                    duration_ms=500,
+                    logs="deprovisioned",
+                    runtime_status="deprovisioned",
+                )
+
+        monkeypatch.setattr(
+            "agent_daemon.worker_daemon.probe_docker_reachable",
+            lambda: True,
+        )
+        mock_server.commands = [
+            {
+                "id": "cmd-deprovision",
+                "command": "deprovision_tenant",
+                "payload": {
+                    "tenant_slug": "team-1",
+                    "db_name": "hs_team_1",
+                },
+            }
+        ]
+        daemon = WorkerDaemon(
+            agent_client,
+            stack_provisioner=FakeProvisioner(),
+        )
+        daemon._state = daemon.state.__class__(
+            installed_modules=daemon.state.installed_modules,
+            docker_reachable=True,
+            tenant_inventory=("team-1", "team-2"),
+        )
+
+        daemon.run_once()
+
+        assert deprovision_calls == [("team-1", "hs_team_1")]
+        assert mock_server.acks[0]["state"] == "acked"
+        assert mock_server.acks[0]["result"]["runtime_status"] == "deprovisioned"
         assert "team-1" not in daemon.state.tenant_inventory
 
     def test_provision_tenant_fails_when_docker_unreachable(

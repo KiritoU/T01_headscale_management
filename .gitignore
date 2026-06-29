@@ -49,3 +49,6 @@ __pycache__/
 
 # Docker local overrides
 docker-compose.override.yml
+
+# Traefik ACME storage (contains account private key)
+traefik/acme/acme.json

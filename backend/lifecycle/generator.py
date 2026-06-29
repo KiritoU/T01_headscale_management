@@ -3,13 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from django.conf import settings
+
 from lifecycle.deployment import (
     login_server_url,
     tenant_base_domain,
     tenant_download_host,
     tenant_production_mode,
 )
-from lifecycle.stack_generator import traefik_router_labels
+from lifecycle.stack_generator import service_edge_networks_block, traefik_router_labels
 from tenants.models import Tenant
 
 DEFAULT_POSTGRES_USER = "headscale"
@@ -29,6 +31,8 @@ class TenantConfigInput:
     production: bool
     base_domain: str
     download_host: str
+    shared_edge_traefik: bool = False
+    shared_edge_docker_network: str = ""
 
 
 def _derive_magic_dns_base(
@@ -63,6 +67,7 @@ def tenant_config_input_from_model(tenant: Tenant) -> TenantConfigInput:
         headscale_host=tenant.headscale_host,
         desired_config=desired_config,
     )
+    shared_edge_traefik = bool(tenant.worker and tenant.worker.shared_edge_traefik)
     return TenantConfigInput(
         slug=tenant.slug,
         headscale_host=tenant.headscale_host,
@@ -75,6 +80,10 @@ def tenant_config_input_from_model(tenant: Tenant) -> TenantConfigInput:
         production=production,
         base_domain=base_domain,
         download_host=tenant_download_host(desired_config, base_domain=base_domain),
+        shared_edge_traefik=shared_edge_traefik,
+        shared_edge_docker_network=(
+            settings.SHARED_EDGE_DOCKER_NETWORK if shared_edge_traefik else ""
+        ),
     )
 
 
@@ -173,12 +182,19 @@ def generate_compose_snippet(config_input: TenantConfigInput) -> str:
     hp_host = config_input.headplane_host
     production = config_input.production
 
+    docker_network = (
+        config_input.shared_edge_docker_network
+        if config_input.shared_edge_traefik
+        else ""
+    )
+
     hs_labels = traefik_router_labels(
         router_name=hs,
         host=hs_host,
         production=production,
         service_port=8080,
         middlewares=(f"cors-{hs}",),
+        docker_network=docker_network,
     )
     cors_origin = (
         f"https://{hp_host}" if production else f"http://{hp_host}"
@@ -196,8 +212,12 @@ def generate_compose_snippet(config_input: TenantConfigInput) -> str:
         host=hp_host,
         production=production,
         service_port=3000,
+        docker_network=docker_network,
     )
     hp_label_lines = "\n".join(f'      - "{label}"' for label in hp_labels)
+    networks_block = service_edge_networks_block(
+        shared_edge_traefik=config_input.shared_edge_traefik,
+    )
 
     return f"""  {hs}:
     image: headscale/headscale:latest
@@ -214,7 +234,7 @@ def generate_compose_snippet(config_input: TenantConfigInput) -> str:
       - ./ACL.json:/etc/headscale/ACL.json:ro
     labels:
 {hs_label_lines}
-
+{networks_block}
   {hp}:
     image: ghcr.io/tale/headplane:latest
     container_name: {hp}
@@ -229,7 +249,7 @@ def generate_compose_snippet(config_input: TenantConfigInput) -> str:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     labels:
 {hp_label_lines}
-"""
+{networks_block}"""
 
 
 def generate_tenant_config(tenant: Tenant) -> dict[str, Any]:

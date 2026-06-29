@@ -74,6 +74,36 @@ class TenantViewSet(ScopedQuerysetMixin, viewsets.ModelViewSet):
         tenant = serializer.save()
         return Response(TenantSerializer(tenant).data, status=status.HTTP_201_CREATED)
 
+    def destroy(self, request: Request, *args, **kwargs) -> Response:
+        tenant = self.get_object()
+        if tenant.worker_id is not None:
+            from workers.tenant_services import (
+                WorkerTenantError,
+                removal_result_to_action_data,
+                remove_tenant,
+            )
+
+            worker = tenant.worker
+            if worker is None:
+                return Response(
+                    api_envelope(error="Tenant worker is missing."),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                result = remove_tenant(worker, tenant)
+            except WorkerTenantError as exc:
+                return Response(
+                    api_envelope(error=str(exc)),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if result.removed_immediately:
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            return Response(
+                api_envelope(data=removal_result_to_action_data(result)),
+                status=status.HTTP_202_ACCEPTED,
+            )
+        return super().destroy(request, *args, **kwargs)
+
     def _assert_can_create(self, validated_data: dict) -> None:
         user = self.request.user
         if getattr(user, "is_admin", False):

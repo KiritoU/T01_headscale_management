@@ -117,6 +117,24 @@ class WorkerCommandView(APIView):
         return Response(api_envelope(data=response_data), status=status.HTTP_201_CREATED)
 
 
+class WorkerMetricsView(APIView):
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways, ScopedResourceAccess]
+    scope_type = ScopeType.WORKER
+
+    def get_scope_id(self, obj: Worker):
+        return obj.id
+
+    def get(self, request: Request, worker_id: str) -> Response:
+        from agents.metrics_service import build_metrics_response, parse_metrics_window_param
+
+        worker = get_object_or_404(Worker.objects.select_related("agent"), id=worker_id)
+        self.check_object_permissions(request, worker)
+        window = parse_metrics_window_param(request.query_params.get("window"))
+        payload = build_metrics_response(worker.agent, window_seconds=window)
+        return Response(api_envelope(data=payload))
+
+
 class WorkerEnrollmentTokenCreateView(APIView):
     authentication_classes = [SessionAuthentication]
     permission_classes = [IsAuthenticatedHuman, DenyViewerOnWorkersGateways]

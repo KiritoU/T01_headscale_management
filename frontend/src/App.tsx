@@ -3,12 +3,14 @@ import { AppLayout } from './components/layout/AppLayout'
 import { LoadingState } from './components/ui/PageState'
 import { useAuth } from './contexts/auth'
 import { UsersPage } from './pages/admin/UsersPage'
+import { ConsoleSettingsPage } from './pages/admin/ConsoleSettingsPage'
 import { GatewayDetailPage } from './pages/GatewayDetailPage'
 import { GatewaysPage } from './pages/GatewaysPage'
 import { LoginPage } from './pages/LoginPage'
 import { TenantDetailPage } from './pages/TenantDetailPage'
 import { TenantsPage } from './pages/TenantsPage'
 import { WorkerTenantDetailPage } from './pages/WorkerTenantDetailPage'
+import { WorkerMetricsPage } from './pages/WorkerMetricsPage'
 import { WorkerTenantsPage } from './pages/WorkerTenantsPage'
 import { WorkersPage } from './pages/WorkersPage'
 
@@ -68,6 +70,7 @@ export default function App() {
           <Route path="tenants/:id" element={<TenantDetailPage />} />
           <Route element={<InfrastructureRoute />}>
             <Route path="workers" element={<WorkersPage />} />
+            <Route path="workers/:workerId/metrics" element={<WorkerMetricsPage />} />
             <Route path="workers/:workerId/tenants" element={<WorkerTenantsPage />} />
             <Route
               path="workers/:workerId/tenants/:tenantId"
@@ -78,6 +81,7 @@ export default function App() {
           </Route>
           <Route element={<AdminRoute />}>
             <Route path="admin/users" element={<UsersPage />} />
+            <Route path="admin/settings" element={<ConsoleSettingsPage />} />
           </Route>
         </Route>
       </Route>

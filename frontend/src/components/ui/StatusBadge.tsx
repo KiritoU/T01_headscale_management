@@ -43,6 +43,7 @@ const runtimeVariants: Record<RuntimeStatus, BadgeVariant> = {
   running: 'success',
   stopped: 'warning',
   failed: 'danger',
+  deleting: 'warning',
 }
 
 const workerVariants: Record<WorkerStatus, BadgeVariant> = {

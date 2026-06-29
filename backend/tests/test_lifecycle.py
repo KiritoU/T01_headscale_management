@@ -22,7 +22,12 @@ from lifecycle.render import (
     resolve_headplane_config_for_worker,
     resolve_headscale_config_for_worker,
 )
-from lifecycle.scripts import generate_gateway_script, generate_linux_script, generate_script
+from lifecycle.scripts import (
+    generate_gateway_script,
+    generate_linux_script,
+    generate_script,
+    generate_window_script,
+)
 from lifecycle.stack_generator import (
     assemble_compose_yml,
     generate_traefik_service,
@@ -138,6 +143,27 @@ class TestStackGenerator:
         assert "traefik.http.routers.headscale-team-1.entrypoints=websecure" in labels
         assert "traefik.http.routers.headscale-team-1.tls.certresolver=letsencrypt" in labels
 
+    def test_traefik_router_labels_pins_docker_network_when_provided(self):
+        labels = traefik_router_labels(
+            router_name="headscale-team-1",
+            host="headscale-team-1.example.com",
+            production=True,
+            service_port=8080,
+            docker_network="t01_headscale_management_app",
+        )
+
+        assert "traefik.docker.network=t01_headscale_management_app" in labels
+
+    def test_traefik_router_labels_omits_docker_network_by_default(self):
+        labels = traefik_router_labels(
+            router_name="headscale-team-1",
+            host="headscale-team-1.example.com",
+            production=True,
+            service_port=8080,
+        )
+
+        assert not any("traefik.docker.network" in label for label in labels)
+
     def test_generate_traefik_service_dev_vs_production(self):
         dev = generate_traefik_service(production=False)
         prod = generate_traefik_service(production=True)
@@ -155,7 +181,6 @@ class TestStackGenerator:
         tenant_block = "  headscale-team-1:\n    image: headscale/headscale:latest"
         compose = assemble_compose_yml(
             production=False,
-            download_host="download.example.com",
             tenant_service_blocks=[tenant_block],
         )
 
@@ -163,14 +188,25 @@ class TestStackGenerator:
         assert "traefik:" in compose
         assert "postgres:" in compose
         assert "pgbouncer:" in compose
-        assert "scripts:" in compose
+        assert "scripts:" not in compose
         assert tenant_block in compose
-        assert "entrypoints=web" in compose
+        assert "entrypoints.web.address=:80" in compose
+
+    def test_assemble_compose_yml_shared_edge_omits_traefik(self):
+        tenant_block = "  headscale-team-1:\n    image: headscale/headscale:latest"
+        compose = assemble_compose_yml(
+            production=True,
+            tenant_service_blocks=[tenant_block],
+            shared_edge_traefik=True,
+        )
+
+        assert "traefik:" not in compose
+        assert "postgres:" in compose
+        assert tenant_block in compose
 
     def test_stack_file_bundle_contains_expected_paths(self):
         bundle = stack_file_bundle(
             production=False,
-            download_host="download.example.com",
             database_lines={"hs_team_1": "host=postgres port=5432 dbname=hs_team_1"},
             postgres_user="headscale",
             postgres_password="secret-postgres",
@@ -182,7 +218,6 @@ class TestStackGenerator:
 
         assert set(bundle) == {
             "ACL.json",
-            "nginx.conf",
             "pgbouncer/pgbouncer.ini",
             "pgbouncer/userlist.txt",
             "postgres/init/00-init.sql",
@@ -242,8 +277,7 @@ class TestProvisionPayload:
         assert isinstance(payload["headplane_config"], dict)
         assert isinstance(payload["compose_snippet"], str)
         assert "headscale-team-1:" in payload["compose_snippet"]
-        assert payload["client_scripts"]["linux.sh"]
-        assert payload["client_scripts"]["gateway.sh"]
+        assert "client_scripts" not in payload
 
     def test_build_provision_payload_production_mode(self, production_tenant):
         payload = build_provision_payload(production_tenant)
@@ -308,6 +342,28 @@ class TestGenerator:
         assert "entrypoints=websecure" in config["compose_snippet"]
         assert "tls.certresolver=letsencrypt" in config["compose_snippet"]
 
+    def test_compose_snippet_pins_docker_network_in_shared_edge(
+        self,
+        production_tenant,
+        settings,
+    ):
+        settings.SHARED_EDGE_DOCKER_NETWORK = "edge_net_under_test"
+        worker = production_tenant.worker
+        worker.shared_edge_traefik = True
+        worker.save(update_fields=["shared_edge_traefik"])
+
+        config = generate_tenant_config(production_tenant)
+
+        assert "traefik.docker.network=edge_net_under_test" in config["compose_snippet"]
+
+    def test_compose_snippet_omits_docker_network_without_shared_edge(
+        self,
+        production_tenant,
+    ):
+        config = generate_tenant_config(production_tenant)
+
+        assert "traefik.docker.network" not in config["compose_snippet"]
+
 
 class TestScripts:
     def test_linux_script_substitutes_login_server(self):
@@ -315,16 +371,25 @@ class TestScripts:
 
         assert 'LOGIN_SERVER="https://headscale-team-1.example.com"' in script
         assert "--accept-routes" in script
+        assert "install_tailscale" in script
+        assert "main" in script
 
     def test_gateway_script_substitutes_login_server(self):
         script = generate_gateway_script(login_server="https://headscale-team-1.example.com")
 
         assert 'LOGIN_SERVER="https://headscale-team-1.example.com"' in script
         assert "--advertise-routes" in script
+        assert "validate_cidr" in script
+        assert "enable_ip_forwarding" in script
+
+    def test_window_script_substitutes_login_server(self):
+        script = generate_window_script(login_server="https://headscale-team-1.example.com")
+
+        assert '$LOGIN_SERVER = "https://headscale-team-1.example.com"' in script
 
     def test_generate_script_rejects_unknown_name(self):
         with pytest.raises(ValueError, match="Unsupported script"):
-            generate_script("window.ps1", login_server="https://example.com")
+            generate_script("unknown.sh", login_server="https://example.com")
 
 
 @pytest.mark.django_db
@@ -444,9 +509,17 @@ class TestLifecycleApi:
         assert response.status_code == 200
         assert b"--advertise-routes" in response.content
 
-    def test_get_unknown_script_returns_envelope(self, client, tenant):
+    def test_get_window_script(self, client, tenant):
         response = client.get(
             reverse("tenant-script", kwargs={"tenant_id": tenant.id, "name": "window.ps1"})
+        )
+
+        assert response.status_code == 200
+        assert b'$LOGIN_SERVER = "http://headscale-team-1.example.com"' in response.content
+
+    def test_get_unknown_script_returns_envelope(self, client, tenant):
+        response = client.get(
+            reverse("tenant-script", kwargs={"tenant_id": tenant.id, "name": "unknown.sh"})
         )
 
         assert response.status_code == 404

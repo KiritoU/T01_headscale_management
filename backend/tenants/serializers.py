@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from core.console_download import get_console_download_host
 from tenants.detail import get_bootstrap_info, recent_health_checks
 from tenants.legacy import import_legacy_tenant
 from tenants.models import BootstrapStatus, RuntimeStatus, Tenant, TenantHealth
@@ -79,6 +80,7 @@ class TenantHealthSerializer(serializers.ModelSerializer):
 class TenantSerializer(serializers.ModelSerializer):
     worker = serializers.PrimaryKeyRelatedField(read_only=True)
     worker_name = serializers.CharField(source="worker.name", read_only=True, allow_null=True)
+    connect_download_host = serializers.SerializerMethodField()
 
     class Meta:
         model = Tenant
@@ -94,10 +96,15 @@ class TenantSerializer(serializers.ModelSerializer):
             "bootstrap_output_ref",
             "runtime_status",
             "desired_config",
+            "description",
+            "connect_download_host",
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "created_at", "updated_at")
+        read_only_fields = ("id", "created_at", "updated_at", "connect_download_host")
+
+    def get_connect_download_host(self, tenant: Tenant) -> str:
+        return get_console_download_host()
 
 
 class TenantDetailSerializer(TenantSerializer):
@@ -128,6 +135,7 @@ class TenantWriteSerializer(serializers.ModelSerializer):
             "worker",
             "bootstrap_status",
             "desired_config",
+            "description",
         )
 
     def validate_desired_config(self, value):

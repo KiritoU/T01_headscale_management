@@ -2,6 +2,7 @@ import { ArrowLeft, ExternalLink, Loader2, Play } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { TenantBootstrapPanel } from '../components/tenants/TenantBootstrapPanel'
+import { TenantConnectPanel } from '../components/tenants/TenantConnectPanel'
 import { TenantHealthPanel } from '../components/tenants/TenantHealthPanel'
 import { Button } from '../components/ui/Button'
 import { ErrorState, LoadingState } from '../components/ui/PageState'
@@ -30,6 +31,8 @@ export function WorkerTenantDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [bootstrapping, setBootstrapping] = useState(false)
+  const [descriptionDraft, setDescriptionDraft] = useState('')
+  const [savingDescription, setSavingDescription] = useState(false)
 
   const loadTenant = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -43,6 +46,7 @@ export function WorkerTenantDetailPage() {
       try {
         const data = await api.getWorkerTenant(workerId, tenantId)
         setTenant(data)
+        setDescriptionDraft(data.description ?? '')
       } catch (err) {
         if (!options?.silent) {
           setError(err instanceof Error ? err.message : 'Failed to load tenant')
@@ -94,6 +98,29 @@ export function WorkerTenantDetailPage() {
       )
     } finally {
       setBootstrapping(false)
+    }
+  }
+
+  const handleSaveDescription = async () => {
+    if (!workerId || !tenantId) {
+      return
+    }
+    setSavingDescription(true)
+    setActionError(null)
+    setActionMessage(null)
+    try {
+      const updated = await api.updateWorkerTenant(workerId, tenantId, {
+        description: descriptionDraft.trim(),
+      })
+      setTenant(updated)
+      setDescriptionDraft(updated.description ?? '')
+      setActionMessage('Description saved.')
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : 'Failed to save description',
+      )
+    } finally {
+      setSavingDescription(false)
     }
   }
 
@@ -236,9 +263,41 @@ export function WorkerTenantDetailPage() {
                 />
               </dd>
             </div>
+            <div>
+              <dt className="mb-1 text-xs uppercase tracking-wide text-ink-mute-2">
+                Description
+              </dt>
+              <dd>
+                <textarea
+                  value={descriptionDraft}
+                  onChange={(event) => setDescriptionDraft(event.target.value)}
+                  rows={3}
+                  placeholder="Optional tenant description"
+                  className="w-full rounded-sm border border-hairline-strong bg-canvas-night px-3 py-2 text-sm text-white focus:border-primary focus:outline-none"
+                />
+                <div className="mt-2 flex justify-end">
+                  <Button
+                    variant="secondary"
+                    className="px-2 py-1 text-xs"
+                    disabled={
+                      savingDescription ||
+                      descriptionDraft.trim() === (tenant.description ?? '').trim()
+                    }
+                    onClick={() => void handleSaveDescription()}
+                  >
+                    {savingDescription ? (
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                    ) : null}
+                    Save description
+                  </Button>
+                </div>
+              </dd>
+            </div>
           </dl>
         </div>
       </section>
+
+      <TenantConnectPanel tenant={tenant} workerAssigned />
 
       <TenantBootstrapPanel
         bootstrapInfo={tenant.bootstrap_info}

@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { api, bootstrapCsrf } from '../lib/api'
+import { api, bootstrapCsrf, clearCsrfTokenCache } from '../lib/api'
 import type { AuthMeResponse, AuthUser, ResourceGrant, Role } from '../types'
 
 interface AuthContextValue {
@@ -75,6 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (username: string, password: string) => {
       const loggedInUser = await api.login(username, password)
+      await bootstrapCsrf()
       setUser(loggedInUser)
       const session = await api.getMe()
       applySession(session)
@@ -86,7 +87,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await api.logout()
     } finally {
+      clearCsrfTokenCache()
       applySession(null)
+      try {
+        await bootstrapCsrf()
+      } catch {
+        // Anonymous CSRF bootstrap is best-effort after logout.
+      }
     }
   }, [applySession])
 

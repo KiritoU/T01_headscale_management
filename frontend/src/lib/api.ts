@@ -7,6 +7,7 @@ import type {
   GatewayCommandDetail,
   GatewayRoute,
   ResourceGrant,
+  ResourceMetricsResponse,
   Role,
   TailscaleConnectContext,
   DiscoveredHost,
@@ -19,6 +20,8 @@ import type {
   MonitorAlert,
   PaginatedResult,
   PaginationMeta,
+  PlatformConsoleSettings,
+  PlatformEdgeSettings,
   Tenant,
   VulnFinding,
   TenantActionResult,
@@ -74,15 +77,20 @@ function readCsrfCookie(): string | null {
 }
 
 export function getCsrfToken(): string | null {
-  return cachedCsrfToken ?? readCsrfCookie()
+  // Cookie is rotated on login/logout; it is the source of truth for mutating requests.
+  return readCsrfCookie() ?? cachedCsrfToken
 }
 
 export async function bootstrapCsrf(): Promise<string> {
   const data = await request<{ csrf_token: string }>('/api/auth/csrf/', {
     skipAuthRedirect: true,
   })
-  cachedCsrfToken = data.csrf_token
-  return data.csrf_token
+  cachedCsrfToken = readCsrfCookie() ?? data.csrf_token
+  return cachedCsrfToken
+}
+
+export function clearCsrfTokenCache(): void {
+  cachedCsrfToken = null
 }
 
 const AUTH_EXEMPT_PATHS = [
@@ -337,7 +345,67 @@ export const api = {
 
   listWorkers: () => request<Worker[]>('/api/workers/'),
 
+  patchWorker: (id: string, body: Partial<Pick<Worker, 'shared_edge_traefik'>>) =>
+    request<Worker>(`/api/workers/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  getPlatformEdgeSettings: () =>
+    request<PlatformEdgeSettings>('/api/admin/edge-settings/'),
+
+  updatePlatformEdgeSettings: (body: {
+    acme_email?: string
+    cf_dns_api_token?: string
+  }) =>
+    request<PlatformEdgeSettings>('/api/admin/edge-settings/', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  getPlatformConsoleSettings: () =>
+    request<PlatformConsoleSettings>('/api/admin/console-settings/'),
+
+  updatePlatformConsoleSettings: (body: {
+    acme_email?: string
+    cf_dns_api_token?: string
+    download_host?: string
+    download_target_ip?: string | null
+  }) =>
+    request<PlatformConsoleSettings>('/api/admin/console-settings/', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  verifyPlatformCloudflareToken: () =>
+    request<{
+      valid: boolean
+      status: string
+      message: string
+      cf_token_verified_at: string | null
+    }>('/api/admin/console-settings/verify-cloudflare/', {
+      method: 'POST',
+    }),
+
+  syncPlatformDownloadDns: () =>
+    request<{
+      fqdn: string
+      target_ip: string
+      cf_record_id: string
+      synced: boolean
+    }>('/api/admin/console-settings/sync-download-dns/', {
+      method: 'POST',
+    }),
+
   getWorker: (id: string) => request<Worker>(`/api/workers/${id}/`),
+
+  getWorkerMetrics: (workerId: string, windowSeconds?: number) =>
+    request<ResourceMetricsResponse>(
+      `/api/workers/${workerId}/metrics${buildQuery({
+        window:
+          windowSeconds !== undefined ? String(windowSeconds) : undefined,
+      })}`,
+    ),
 
   createWorkerEnrollmentToken: (
     name: string,
@@ -379,6 +447,19 @@ export const api = {
   getWorkerTenant: (workerId: string, tenantId: string) =>
     request<WorkerTenantDetail>(
       `/api/workers/${workerId}/tenants/${tenantId}/`,
+    ),
+
+  updateWorkerTenant: (
+    workerId: string,
+    tenantId: string,
+    body: { description?: string },
+  ) =>
+    request<WorkerTenantDetail>(
+      `/api/workers/${workerId}/tenants/${tenantId}/`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      },
     ),
 
   bulkCreateWorkerTenants: (
@@ -427,9 +508,12 @@ export const api = {
     ),
 
   removeWorkerTenant: (workerId: string, tenantId: string) =>
-    request<null>(`/api/workers/${workerId}/tenants/${tenantId}/`, {
-      method: 'DELETE',
-    }),
+    request<WorkerTenantActionResult | null>(
+      `/api/workers/${workerId}/tenants/${tenantId}/`,
+      {
+        method: 'DELETE',
+      },
+    ),
 
   listGateways: (params: { tenant_id?: string } = {}) =>
     request<Gateway[]>(
@@ -437,6 +521,14 @@ export const api = {
     ),
 
   getGateway: (id: string) => request<Gateway>(`/api/gateways/${id}/`),
+
+  getGatewayMetrics: (gatewayId: string, windowSeconds?: number) =>
+    request<ResourceMetricsResponse>(
+      `/api/gateways/${gatewayId}/metrics${buildQuery({
+        window:
+          windowSeconds !== undefined ? String(windowSeconds) : undefined,
+      })}`,
+    ),
 
   deleteGateway: (id: string) =>
     request<null>(`/api/gateways/${id}/`, {

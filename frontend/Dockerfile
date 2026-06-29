@@ -15,7 +15,9 @@ RUN npm run build
 FROM nginx:1.27-alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY docker/nginx/00-forwarded-proto-map.conf /etc/nginx/conf.d/00-forwarded-proto-map.conf
+# Rendered to /etc/nginx/conf.d/default.conf at startup with ${DOWNLOAD_HOST} substituted.
+COPY docker/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 
 EXPOSE 80
 

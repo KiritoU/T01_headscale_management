@@ -25,6 +25,7 @@ from workers.tenant_serializers import (
     WorkerTenantDetailSerializer,
     WorkerTenantSerializer,
     WorkerTenantSummarySerializer,
+    WorkerTenantUpdateSerializer,
 )
 from workers.tenant_services import (
     WorkerTenantError,
@@ -35,6 +36,7 @@ from workers.tenant_services import (
     enqueue_stop_tenant,
     get_tenant_summary,
     remove_tenant,
+    removal_result_to_action_data,
     sync_tenant_from_acked_command,
 )
 
@@ -97,10 +99,11 @@ class WorkerTenantBulkCreateView(WorkerScopedAPIView):
             tenants = bulk_create_tenants(
                 worker,
                 suffix=data["suffix"],
-                start_number=data["start_number"],
-                count=data["count"],
+                start_number=data.get("start_number"),
+                count=data.get("count"),
                 base_domain=data["base_domain"],
                 production=data.get("production", False),
+                description=data.get("description", ""),
             )
         except WorkerTenantError as exc:
             return Response(api_envelope(error=str(exc)), status=status.HTTP_400_BAD_REQUEST)
@@ -268,16 +271,38 @@ class WorkerTenantDetailView(WorkerScopedAPIView):
         serializer = WorkerTenantDetailSerializer(tenant, context={"request": request})
         return Response(api_envelope(data=serializer.data))
 
+    def patch(self, request: Request, worker_id: str, tenant_id: str) -> Response:
+        worker, tenant = _get_worker_tenant(worker_id, tenant_id)
+        self.check_object_permissions(request, worker)
+        serializer = WorkerTenantUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        if "description" in serializer.validated_data:
+            tenant.description = serializer.validated_data["description"].strip()
+            tenant.save(update_fields=["description", "updated_at"])
+        response_serializer = WorkerTenantDetailSerializer(
+            Tenant.objects.select_related("worker")
+            .prefetch_related("health_checks")
+            .get(pk=tenant.id),
+            context={"request": request},
+        )
+        return Response(api_envelope(data=response_serializer.data))
+
     def delete(self, request: Request, worker_id: str, tenant_id: str) -> Response:
         worker = get_object_or_404(Worker.objects.select_related("agent"), id=worker_id)
         self.check_object_permissions(request, worker)
         tenant = get_object_or_404(Tenant, id=tenant_id, worker_id=worker.id)
         try:
-            remove_tenant(worker, tenant)
+            result = remove_tenant(worker, tenant)
         except WorkerTenantError as exc:
             return Response(api_envelope(error=str(exc)), status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        if result.removed_immediately:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        return Response(
+            api_envelope(data=removal_result_to_action_data(result)),
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class WorkerTenantCommandPollView(WorkerScopedAPIView):

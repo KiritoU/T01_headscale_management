@@ -2,6 +2,7 @@ import { ArrowLeft, Copy, Loader2, Radar, RefreshCw, Trash2 } from 'lucide-react
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { GatewayMonitoringPanel } from '../components/gateways/GatewayMonitoringPanel'
+import { ResourceMetricsPanel } from '../components/metrics/ResourceMetricsPanel'
 import { TailscaleConnectPanel } from '../components/gateways/TailscaleConnectPanel'
 import { Button } from '../components/ui/Button'
 import { DataTable, type Column } from '../components/ui/DataTable'
@@ -37,10 +38,11 @@ const SCAN_PAGE_SIZE = 10
 const SCAN_POLL_MAX_MS = 2 * 60 * 60 * 1000
 const SCAN_POLL_MAX_HOURS = SCAN_POLL_MAX_MS / (60 * 60 * 1000)
 
-type GatewayDetailTab = 'overview' | 'monitoring'
+type GatewayDetailTab = 'overview' | 'monitoring' | 'resources'
 
 const GATEWAY_DETAIL_TABS: { id: GatewayDetailTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
+  { id: 'resources', label: 'Resources' },
   { id: 'monitoring', label: 'Monitoring' },
 ]
 
@@ -126,6 +128,13 @@ export function GatewayDetailPage() {
     } finally {
       setLoading(false)
     }
+  }, [id])
+
+  const fetchGatewayMetrics = useCallback(() => {
+    if (!id) {
+      return Promise.reject(new Error('Gateway not found'))
+    }
+    return api.getGatewayMetrics(id)
   }, [id])
 
   const loadRoutes = useCallback(async () => {
@@ -652,6 +661,18 @@ export function GatewayDetailPage() {
             setActionMessage(null)
             setActionError(message)
           }}
+        />
+      ) : null}
+
+      {activeTab === 'resources' ? (
+        <ResourceMetricsPanel
+          title={`${gateway.hostname || gateway.tenant_slug} resources`}
+          fetcher={fetchGatewayMetrics}
+          emptyMessage={
+            gateway.status === 'pending'
+              ? 'Gateway has not enrolled yet. Metrics appear after the agent connects.'
+              : 'No metrics yet. Metrics appear after the gateway agent sends its next heartbeat.'
+          }
         />
       ) : null}
 

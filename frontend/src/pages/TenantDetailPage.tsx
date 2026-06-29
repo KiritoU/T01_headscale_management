@@ -2,6 +2,7 @@ import { ArrowLeft, ExternalLink, Loader2, Play } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { TenantBootstrapPanel } from '../components/tenants/TenantBootstrapPanel'
+import { TenantConnectPanel } from '../components/tenants/TenantConnectPanel'
 import { TenantHealthPanel } from '../components/tenants/TenantHealthPanel'
 import { Button } from '../components/ui/Button'
 import { ErrorState, LoadingState } from '../components/ui/PageState'
@@ -244,6 +245,8 @@ export function TenantDetailPage() {
           </dl>
         </div>
       </section>
+
+      <TenantConnectPanel tenant={tenant} workerAssigned={Boolean(tenant.worker)} />
 
       <TenantBootstrapPanel
         bootstrapInfo={tenant.bootstrap_info}

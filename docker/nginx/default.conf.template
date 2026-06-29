@@ -1,3 +1,10 @@
+# Rendered from this template by the nginx entrypoint (envsubst on ${DOWNLOAD_HOST}).
+# 1 when the request Host matches the centralized download host, else 0.
+map $host $is_download_host {
+    default        0;
+    "${DOWNLOAD_HOST}" 1;
+}
+
 server {
     listen 80;
     server_name _;
@@ -8,33 +15,39 @@ server {
     client_max_body_size 20m;
 
     location /api/ {
+        if ($is_download_host) {
+            return 404;
+        }
         proxy_pass http://backend:8000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $proxy_x_forwarded_proto;
     }
 
     location /admin/ {
+        if ($is_download_host) {
+            return 404;
+        }
         proxy_pass http://backend:8000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $proxy_x_forwarded_proto;
     }
 
     location = /gateway-agent.sh {
         proxy_pass http://backend:8000;
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $proxy_x_forwarded_proto;
     }
 
     location = /worker-agent.sh {
         proxy_pass http://backend:8000;
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $proxy_x_forwarded_proto;
     }
 
     location = /gateway-vuln-nse-pack.tar.gz {
@@ -48,11 +61,26 @@ server {
     }
 
     location /static/ {
+        if ($is_download_host) {
+            return 404;
+        }
         proxy_pass http://backend:8000;
         proxy_set_header Host $host;
     }
 
+    location ~ ^/([^/]+)/(linux\.sh|gateway\.sh|window\.ps1)$ {
+        proxy_pass http://backend:8000/api/scripts/$1/$2;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $proxy_x_forwarded_proto;
+    }
+
     location / {
+        if ($is_download_host) {
+            return 404;
+        }
         try_files $uri $uri/ /index.html;
     }
 }

@@ -42,6 +42,7 @@ export type RuntimeStatus =
   | 'running'
   | 'stopped'
   | 'failed'
+  | 'deleting'
 
 export type WorkerStatus = 'pending' | 'online' | 'offline' | 'disabled'
 
@@ -54,7 +55,9 @@ export interface Tenant {
   worker: string | null
   worker_name: string | null
   bootstrap_status: BootstrapStatus
+  connect_download_host?: string
   desired_config: Record<string, unknown>
+  description: string
   created_at: string
   updated_at: string
 }
@@ -91,9 +94,53 @@ export interface Worker {
   status: WorkerStatus
   credential_ref: string
   docker_reachable: boolean
+  shared_edge_traefik: boolean
+  public_ip: string | null
+  public_ip_override: string | null
   installed_modules?: string[]
   last_heartbeat_at: string | null
   created_at: string
+  updated_at: string
+}
+
+export interface ResourceSample {
+  id: string
+  sampled_at: string
+  cpu_percent: number | null
+  mem_percent: number | null
+  disk_percent: number | null
+  mem_total_bytes: number | null
+  mem_used_bytes: number | null
+  disk_total_bytes: number | null
+  disk_used_bytes: number | null
+  net_rx_bytes_per_sec: number | null
+  net_tx_bytes_per_sec: number | null
+  load_avg_1m: number | null
+  cpu_count: number | null
+  uptime_seconds: number | null
+}
+
+export interface ResourceMetricsResponse {
+  current: ResourceSample | null
+  samples: ResourceSample[]
+  window_seconds: number
+}
+
+export interface PlatformConsoleSettings {
+  acme_email: string
+  cf_dns_api_token_configured: boolean
+  cf_dns_api_token_source: 'database' | 'environment' | 'none'
+  cf_token_verified_at: string | null
+  download_host: string
+  download_target_ip: string | null
+  download_dns_synced: boolean
+  download_dns_record_id: string | null
+  updated_at: string
+}
+
+export interface PlatformEdgeSettings {
+  acme_email: string
+  cf_dns_api_token_configured: boolean
   updated_at: string
 }
 
@@ -120,6 +167,7 @@ export interface WorkerTenant {
   runtime_status: RuntimeStatus
   bootstrap_output_ref: string
   desired_config: Record<string, unknown>
+  description: string
   created_at: string
   updated_at: string
 }
@@ -137,10 +185,11 @@ export interface WorkerTenantSummary {
 
 export interface WorkerTenantBulkCreateParams {
   suffix: string
-  start_number: number
-  count: number
+  start_number?: number
+  count?: number
   base_domain: string
   production?: boolean
+  description?: string
 }
 
 export interface WorkerTenantActionResult {

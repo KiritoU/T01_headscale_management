@@ -1,4 +1,4 @@
-import { Layers, Loader2, Plus, Trash2, Unplug } from 'lucide-react'
+import { Activity, Layers, Loader2, Plus, Trash2, Unplug } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AddWorkerModal } from '../components/workers/AddWorkerModal'
@@ -32,6 +32,10 @@ type ConfirmAction =
 
 function workerHasAgent(worker: Worker): boolean {
   return worker.status !== 'pending'
+}
+
+function canViewResources(worker: Worker): boolean {
+  return workerHasAgent(worker)
 }
 
 function canDisconnectWorker(worker: Worker): boolean {
@@ -263,6 +267,17 @@ export function WorkersPage() {
               >
                 <Layers className="h-3.5 w-3.5" aria-hidden />
                 Tenants
+              </Button>
+            ) : null}
+            {canViewResources(row) ? (
+              <Button
+                variant="secondary"
+                className="px-3 py-1.5 text-xs"
+                disabled={actionLoading || installingWorkerId !== null}
+                onClick={() => navigate(`/workers/${row.id}/metrics`)}
+              >
+                <Activity className="h-3.5 w-3.5" aria-hidden />
+                Resources
               </Button>
             ) : null}
             {canDisconnectWorker(row) ? (

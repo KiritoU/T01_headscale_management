@@ -19,24 +19,40 @@ class WorkerTenantSerializer(serializers.ModelSerializer):
             "runtime_status",
             "bootstrap_output_ref",
             "desired_config",
+            "description",
             "created_at",
             "updated_at",
         )
         read_only_fields = fields
 
 
+class WorkerTenantUpdateSerializer(serializers.Serializer):
+    description = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+
+
 class WorkerTenantBulkCreateSerializer(serializers.Serializer):
     suffix = serializers.CharField(max_length=32)
-    start_number = serializers.IntegerField(min_value=1)
-    count = serializers.IntegerField(min_value=1, max_value=100)
+    start_number = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    count = serializers.IntegerField(min_value=1, max_value=100, required=False, allow_null=True)
     base_domain = serializers.CharField(max_length=255)
     production = serializers.BooleanField(required=False, default=False)
+    description = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate_suffix(self, value: str) -> str:
         try:
             return validate_suffix(value)
         except ValueError as exc:
             raise serializers.ValidationError(str(exc)) from exc
+
+    def validate(self, attrs: dict) -> dict:
+        count = attrs.get("count")
+        start_number = attrs.get("start_number")
+        if count is not None:
+            if start_number is None:
+                raise serializers.ValidationError(
+                    {"start_number": "Start number is required when count is set."},
+                )
+        return attrs
 
 
 class WorkerTenantSummarySerializer(serializers.Serializer):

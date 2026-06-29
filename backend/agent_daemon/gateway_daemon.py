@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_daemon.client import AgentClient
+from agent_daemon.system_metrics import SystemMetricsCollector
 from agent_daemon.masscan_scan import MASSCAN_MODULE, scan_cidr_masscan
 from agent_daemon.module_installer import (
     IOT_PROBES_MODULE,
@@ -63,6 +64,7 @@ class GatewayDaemon:
         module_install_runner: CommandRunner | None = None,
         masscan_runner: CommandRunner | None = None,
         auto_detect_modules: bool = False,
+        metrics_collector: SystemMetricsCollector | None = None,
     ) -> None:
         self._client = client
         self._poll_interval_seconds = poll_interval_seconds
@@ -76,6 +78,7 @@ class GatewayDaemon:
             _detect_installed_modules() if auto_detect_modules else frozenset({CORE_MODULE})
         )
         self._state = GatewayDaemonState(installed_modules=initial_modules)
+        self._metrics_collector = metrics_collector or SystemMetricsCollector()
         self._vuln_worker = VulnWorkerPool(
             client,
             nmap_runner=self._nmap_runner,
@@ -106,7 +109,10 @@ class GatewayDaemon:
             {"module_id": module_id, "status": "installed"}
             for module_id in sorted(self._state.installed_modules)
         ]
-        return {"installed_modules": modules}
+        return {
+            "installed_modules": modules,
+            "metrics": self._metrics_collector.sample(),
+        }
 
     def _handle_command(self, command: dict[str, Any]) -> None:
         command_id = command["id"]

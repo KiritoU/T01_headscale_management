@@ -25,6 +25,7 @@ class RuntimeStatus(models.TextChoices):
     RUNNING = "running", "Running"
     STOPPED = "stopped", "Stopped"
     FAILED = "failed", "Failed"
+    DELETING = "deleting", "Deleting"
 
 
 class Tenant(models.Model):
@@ -64,6 +65,7 @@ class Tenant(models.Model):
         help_text="Bootstrap credentials synced from worker after bootstrap_tenant ack.",
     )
     desired_config = models.JSONField(default=dict, blank=True)
+    description = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

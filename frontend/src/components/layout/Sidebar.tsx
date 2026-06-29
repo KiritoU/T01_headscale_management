@@ -1,4 +1,4 @@
-import { Building2, LogOut, Network, Server, Users } from 'lucide-react'
+import { Building2, LogOut, Network, Server, Settings, Users } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/auth'
@@ -15,6 +15,7 @@ const baseNavItems = [
   { to: '/workers', label: 'Workers', icon: Server, requiresInfrastructure: true },
   { to: '/gateways', label: 'Gateways', icon: Network, requiresInfrastructure: true },
   { to: '/admin/users', label: 'Users', icon: Users, requiresAdmin: true },
+  { to: '/admin/settings', label: 'Console settings', icon: Settings, requiresAdmin: true },
 ] as const
 
 export function Sidebar() {

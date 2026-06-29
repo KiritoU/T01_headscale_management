@@ -125,6 +125,21 @@ class GatewayDetailView(GatewayScopedAPIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class GatewayMetricsView(GatewayScopedAPIView):
+
+    def get(self, request: Request, gateway_id: str) -> Response:
+        from agents.metrics_service import build_metrics_response, parse_metrics_window_param
+
+        gateway = get_object_or_404(
+            Gateway.objects.select_related("agent"),
+            id=gateway_id,
+        )
+        self.check_object_permissions(request, gateway)
+        window = parse_metrics_window_param(request.query_params.get("window"))
+        payload = build_metrics_response(gateway.agent, window_seconds=window)
+        return Response(api_envelope(data=payload))
+
+
 class GatewayRoutesView(GatewayScopedAPIView):
 
     def get(self, request: Request, gateway_id: str) -> Response:

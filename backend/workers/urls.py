@@ -19,6 +19,7 @@ from workers.views import (
     WorkerCommandView,
     WorkerDisconnectView,
     WorkerEnrollmentTokenCreateView,
+    WorkerMetricsView,
     WorkerViewSet,
 )
 
@@ -45,6 +46,11 @@ urlpatterns = [
         "<uuid:worker_id>/commands/",
         WorkerCommandView.as_view(),
         name="worker-commands",
+    ),
+    path(
+        "<uuid:worker_id>/metrics/",
+        WorkerMetricsView.as_view(),
+        name="worker-metrics",
     ),
     path(
         "<uuid:worker_id>/tenants/summary/",

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from agents.models import AgentCommand, AgentType
+from agents.models import AgentCommand, AgentType, ResourceSample
 from agents.services import create_agent_token
 from gateways.models import Gateway
 from gateways.services import ENROLL_TOKEN_PREFIX as GATEWAY_ENROLL_TOKEN_PREFIX
@@ -12,6 +12,21 @@ class InstalledModuleSerializer(serializers.Serializer):
     module_id = serializers.CharField(max_length=64)
     status = serializers.CharField(max_length=16, required=False, allow_blank=True, default="")
     version = serializers.CharField(max_length=64, required=False, allow_blank=True, default="")
+
+
+class HeartbeatMetricsSerializer(serializers.Serializer):
+    cpu_percent = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=100)
+    mem_percent = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=100)
+    disk_percent = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=100)
+    mem_total_bytes = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    mem_used_bytes = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    disk_total_bytes = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    disk_used_bytes = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    net_rx_bytes_per_sec = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    net_tx_bytes_per_sec = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    load_avg_1m = serializers.FloatField(required=False, allow_null=True, min_value=0)
+    cpu_count = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    uptime_seconds = serializers.FloatField(required=False, allow_null=True, min_value=0)
 
 
 class AgentRegisterSerializer(serializers.Serializer):
@@ -138,6 +153,7 @@ class AgentHeartbeatSerializer(serializers.Serializer):
     installed_modules = InstalledModuleSerializer(many=True, required=False, default=list)
     docker_reachable = serializers.BooleanField(required=False, allow_null=True)
     tenant_inventory = serializers.JSONField(required=False)
+    metrics = HeartbeatMetricsSerializer(required=False)
 
 
 class AgentCommandEnqueueSerializer(serializers.Serializer):
@@ -171,3 +187,24 @@ class AgentCommandAckSerializer(serializers.Serializer):
             fields = ", ".join(sorted(unknown))
             raise serializers.ValidationError(f"Unknown result fields: {fields}")
         return value
+
+
+class ResourceSampleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ResourceSample
+        fields = (
+            "id",
+            "sampled_at",
+            "cpu_percent",
+            "mem_percent",
+            "disk_percent",
+            "mem_total_bytes",
+            "mem_used_bytes",
+            "disk_total_bytes",
+            "disk_used_bytes",
+            "net_rx_bytes_per_sec",
+            "net_tx_bytes_per_sec",
+            "load_avg_1m",
+            "cpu_count",
+            "uptime_seconds",
+        )

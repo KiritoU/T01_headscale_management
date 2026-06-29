@@ -1,4 +1,31 @@
 services:
+  traefik:
+    image: traefik:v3.6.2
+    restart: unless-stopped
+    command:
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedByDefault=false"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?Set ACME_EMAIL in .env}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/acme/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.delaybeforecheck=10"
+      - "--log.level=INFO"
+    env_file:
+      - .env
+    environment:
+      CLOUDFLARE_DNS_API_TOKEN: ${CLOUDFLARE_DNS_API_TOKEN:?Set CLOUDFLARE_DNS_API_TOKEN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/acme:/acme
+    networks:
+      - app
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -73,11 +100,33 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-}
     restart: unless-stopped
-    ports:
-      - "${WEB_PORT:-8080}:80"
+    environment:
+      DOWNLOAD_HOST: ${DOWNLOAD_HOST:?Set DOWNLOAD_HOST in .env}
+      NGINX_ENVSUBST_FILTER: DOWNLOAD_HOST
     depends_on:
       backend:
         condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.console.rule=Host(`${CONSOLE_HOST:?Set CONSOLE_HOST in .env}`)"
+      - "traefik.http.routers.console.entrypoints=websecure"
+      - "traefik.http.routers.console.tls.certresolver=letsencrypt"
+      - "traefik.http.services.console.loadbalancer.server.port=80"
+      - "traefik.http.routers.console-http.rule=Host(`${CONSOLE_HOST}`)"
+      - "traefik.http.routers.console-http.entrypoints=web"
+      - "traefik.http.routers.console-http.middlewares=console-redirect-https"
+      - "traefik.http.middlewares.console-redirect-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.console-redirect-https.redirectscheme.permanent=true"
+      - "traefik.http.routers.download.rule=Host(`${DOWNLOAD_HOST:?Set DOWNLOAD_HOST in .env}`)"
+      - "traefik.http.routers.download.entrypoints=websecure"
+      - "traefik.http.routers.download.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.download.service=console"
+      - "traefik.http.routers.download-http.rule=Host(`${DOWNLOAD_HOST}`)"
+      - "traefik.http.routers.download-http.entrypoints=web"
+      - "traefik.http.routers.download-http.middlewares=download-redirect-https"
+      - "traefik.http.routers.download-http.service=console"
+      - "traefik.http.middlewares.download-redirect-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.download-redirect-https.redirectscheme.permanent=true"
     networks:
       - app
 

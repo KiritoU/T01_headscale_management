@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from agent_daemon.stack_provisioner import StackProvisioner
+from core.models import PlatformSettings
 from lifecycle.generator import generate_tenant_config
 from lifecycle.provision_payload import build_provision_payload
 from tenants.models import Tenant
@@ -25,6 +26,8 @@ def _mock_docker_exec(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProc
     if "CREATE USER" in joined:
         return _completed(cmd)
     if "CREATE DATABASE" in joined:
+        return _completed(cmd)
+    if "DROP DATABASE" in joined:
         return _completed(cmd)
     if cmd[-2:] == ["restart", "pgbouncer"]:
         return _completed(cmd)
@@ -81,7 +84,7 @@ class TestStackProvisioner:
         assert (tenant_dir / "compose.snippet.yml").is_file()
         assert (tenant_dir / "metadata.json").is_file()
         assert (tmp_path / "compose.yml").is_file()
-        assert (tmp_path / "scripts-root" / "team-1" / "linux.sh").is_file()
+        assert not (tmp_path / "scripts-root" / "team-1" / "linux.sh").exists()
 
         headscale_config = yaml.safe_load((tenant_dir / "headscale" / "config.yaml").read_text())
         assert headscale_config["database"]["postgres"]["pass"]
@@ -129,13 +132,63 @@ class TestStackProvisioner:
         assert result.runtime_status == "failed"
         assert "compose failed" in result.logs
 
-    def test_provision_production_requires_acme_env(
+    def test_provision_production_requires_edge_settings_in_payload(
         self,
         tmp_path,
         db,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         worker = Worker.objects.create(name="prod-worker", hostname="prod.vps.example.com")
+        tenant = Tenant.objects.create(
+            slug="prod-1",
+            headscale_host="headscale-prod-1.example.com",
+            headplane_host="headplane-prod-1.example.com",
+            db_name="hs_prod_1",
+            worker=worker,
+            desired_config={
+                "production": True,
+                "base_domain": "example.com",
+                "download_host": "download.example.com",
+                "dns": {"magic_dns_base": "tailnet-prod-1.example.com"},
+            },
+        )
+        PlatformSettings.objects.update_or_create(
+            pk=1,
+            defaults={"acme_email": "", "cf_dns_api_token": ""},
+        )
+        payload = build_provision_payload(tenant)
+        payload.pop("acme_email", None)
+        payload.pop("cf_dns_api_token", None)
+
+        monkeypatch.delenv("ACME_EMAIL", raising=False)
+        monkeypatch.delenv("CF_DNS_API_TOKEN", raising=False)
+        monkeypatch.delenv("CLOUDFLARE_DNS_API_TOKEN", raising=False)
+
+        monkeypatch.setattr(
+            "agent_daemon.stack_provisioner.subprocess.run",
+            _mock_docker_exec,
+        )
+
+        provisioner = StackProvisioner(
+            stack_dir=tmp_path,
+            compose_runner=lambda args, cwd, timeout: _completed(args),
+        )
+        result = provisioner.provision(payload)
+
+        assert result.exit_code == 1
+        assert "platform edge settings" in result.logs
+
+    def test_provision_production_shared_edge_skips_local_traefik(
+        self,
+        tmp_path,
+        db,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        worker = Worker.objects.create(
+            name="shared-worker",
+            hostname="shared.vps.example.com",
+            shared_edge_traefik=True,
+        )
         tenant = Tenant.objects.create(
             slug="prod-1",
             headscale_host="headscale-prod-1.example.com",
@@ -162,8 +215,10 @@ class TestStackProvisioner:
         )
         result = provisioner.provision(payload)
 
-        assert result.exit_code == 1
-        assert "Production mode requires stack .env values" in result.logs
+        assert result.exit_code == 0
+        compose_yml = (tmp_path / "compose.yml").read_text()
+        assert "traefik:" not in compose_yml
+        assert "entrypoints=websecure" in compose_yml
 
     def test_provision_rejects_mixed_production_modes(
         self,
@@ -247,3 +302,90 @@ class TestStackProvisioner:
         assert result.exit_code == 0
         assert result.runtime_status == "running"
         assert compose_calls == [["up", "-d", "headscale-team-1", "headplane-team-1"]]
+
+    def test_deprovision_removes_tenant_and_regenerates_compose(
+        self,
+        tmp_path,
+        provision_payload,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        compose_calls: list[list[str]] = []
+
+        def mock_compose_runner(args: list[str], cwd, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+            compose_calls.append(args)
+            return _completed(args, stdout="ok")
+
+        monkeypatch.setattr(
+            "agent_daemon.stack_provisioner.subprocess.run",
+            _mock_docker_exec,
+        )
+
+        provisioner = StackProvisioner(
+            stack_dir=tmp_path,
+            compose_runner=mock_compose_runner,
+        )
+        provision_result = provisioner.provision(provision_payload)
+        assert provision_result.exit_code == 0
+
+        compose_calls.clear()
+        deprovision_result = provisioner.deprovision(
+            "team-1",
+            db_name="hs_team_1",
+        )
+
+        assert deprovision_result.exit_code == 0
+        assert not (tmp_path / "tenants" / "team-1").exists()
+        assert compose_calls[0] == ["rm", "-sf", "headscale-team-1", "headplane-team-1"]
+        assert ["up", "-d", "--remove-orphans"] in compose_calls
+
+        state = json.loads((tmp_path / "stack-state.json").read_text(encoding="utf-8"))
+        assert state["tenants"] == []
+        assert "hs_team_1" not in state["databases"]
+
+    def test_deprovision_shared_edge_regenerates_without_local_traefik(
+        self,
+        tmp_path,
+        db,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        worker = Worker.objects.create(
+            name="shared-worker",
+            hostname="shared.vps.example.com",
+            shared_edge_traefik=True,
+        )
+        tenant = Tenant.objects.create(
+            slug="prod-1",
+            headscale_host="headscale-prod-1.example.com",
+            headplane_host="headplane-prod-1.example.com",
+            db_name="hs_prod_1",
+            worker=worker,
+            desired_config={
+                "production": True,
+                "base_domain": "example.com",
+                "download_host": "download.example.com",
+                "dns": {"magic_dns_base": "tailnet-prod-1.example.com"},
+            },
+        )
+        payload = build_provision_payload(tenant)
+
+        monkeypatch.setattr(
+            "agent_daemon.stack_provisioner.subprocess.run",
+            _mock_docker_exec,
+        )
+
+        provisioner = StackProvisioner(
+            stack_dir=tmp_path,
+            compose_runner=lambda args, cwd, timeout: _completed(args),
+        )
+        assert provisioner.provision(payload).exit_code == 0
+        assert "traefik:" not in (tmp_path / "compose.yml").read_text()
+
+        result = provisioner.deprovision(
+            "prod-1",
+            db_name="hs_prod_1",
+            shared_edge_docker_network="control_plane",
+        )
+        assert result.exit_code == 0
+        compose_yml = (tmp_path / "compose.yml").read_text()
+        assert "traefik:" not in compose_yml
+        assert "headscale-prod-1" not in compose_yml

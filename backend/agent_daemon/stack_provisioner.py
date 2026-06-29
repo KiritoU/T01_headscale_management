@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -139,31 +140,36 @@ class StackProvisioner:
     def _provision_impl(self, payload: dict[str, Any]) -> str:
         tenant_slug = str(payload["tenant_slug"])
         production = bool(payload.get("production"))
+        shared_edge = bool(payload.get("shared_edge_traefik"))
         db_name = str(payload["db_name"])
         validate_db_name(db_name)
 
-        if production:
-            env_values = _read_env_file(self._stack_dir / ".env")
+        if production and not shared_edge:
+            acme_email = str(payload.get("acme_email", "")).strip()
+            cf_token = str(payload.get("cf_dns_api_token", "")).strip()
             missing = [
                 key
-                for key in ("ACME_EMAIL", "CF_DNS_API_TOKEN")
-                if not env_values.get(key) or env_values[key].startswith("replace-me")
+                for key, value in (
+                    ("ACME_EMAIL", acme_email),
+                    ("CF_DNS_API_TOKEN", cf_token),
+                )
+                if not value or value.startswith("replace-me")
             ]
             if missing:
                 msg = (
-                    "Production mode requires stack .env values: "
+                    "Production mode requires platform edge settings: "
                     + ", ".join(missing)
+                    + ". Configure them in the control plane UI."
                 )
                 raise StackProvisionError(msg)
 
         self._stack_dir.mkdir(parents=True, exist_ok=True)
-        (self._stack_dir / "traefik" / "acme").mkdir(parents=True, exist_ok=True)
+        if not shared_edge:
+            (self._stack_dir / "traefik" / "acme").mkdir(parents=True, exist_ok=True)
         (self._stack_dir / "postgres" / "init").mkdir(parents=True, exist_ok=True)
         (self._stack_dir / "pgbouncer").mkdir(parents=True, exist_ok=True)
-        (self._stack_dir / "scripts-root" / tenant_slug).mkdir(parents=True, exist_ok=True)
 
         state = self._load_state()
-        download_host = str(state.get("download_host") or payload["download_host"])
         if state.get("initialized") and state.get("production") != production:
             raise StackProvisionError(
                 "Cannot mix production and dev tenants on one worker stack. "
@@ -176,9 +182,10 @@ class StackProvisioner:
         pgbouncer_password = _ensure_secret(env_values, "PGBOUNCER_PASSWORD")
         env_values.setdefault("PGBOUNCER_USER", DEFAULT_PGBOUNCER_USER)
         env_values.setdefault("POSTGRES_APP_USER", DEFAULT_POSTGRES_USER)
-        if production:
-            env_values.setdefault("ACME_EMAIL", "admin@example.com")
-            env_values.setdefault("CF_DNS_API_TOKEN", "replace-me")
+        if production and not shared_edge:
+            env_values["ACME_EMAIL"] = str(payload.get("acme_email", "")).strip()
+            env_values["CF_DNS_API_TOKEN"] = str(payload.get("cf_dns_api_token", "")).strip()
+            env_values["CLOUDFLARE_DNS_API_TOKEN"] = env_values["CF_DNS_API_TOKEN"]
         _write_env_file(env_path, env_values)
         env_path.chmod(0o600)
 
@@ -232,7 +239,6 @@ class StackProvisioner:
                     "slug": tenant_slug,
                     "db_name": db_name,
                     "production": production,
-                    "download_host": download_host,
                     "login_server": payload.get("login_server"),
                 },
                 indent=2,
@@ -240,13 +246,6 @@ class StackProvisioner:
             + "\n",
             encoding="utf-8",
         )
-
-        client_scripts = dict(payload.get("client_scripts") or {})
-        scripts_dir = self._stack_dir / "scripts-root" / tenant_slug
-        for name, content in client_scripts.items():
-            script_path = scripts_dir / name
-            script_path.write_text(str(content), encoding="utf-8")
-            script_path.chmod(0o755)
 
         tenants = set(state.get("tenants", []))
         tenants.add(tenant_slug)
@@ -256,7 +255,6 @@ class StackProvisioner:
         tenant_blocks = self._collect_tenant_compose_blocks(sorted(tenants))
         bundle = stack_file_bundle(
             production=production,
-            download_host=download_host,
             database_lines=databases,
             postgres_user=DEFAULT_POSTGRES_USER,
             postgres_password=postgres_password,
@@ -264,6 +262,10 @@ class StackProvisioner:
             pgbouncer_password=pgbouncer_password,
             database_names_for_init=sorted(databases),
             tenant_service_blocks=tenant_blocks,
+            shared_edge_traefik=shared_edge,
+            shared_edge_docker_network=str(
+                payload.get("shared_edge_docker_network", ""),
+            ),
         )
         for relative_path, content in bundle.items():
             target = self._stack_dir / relative_path
@@ -277,7 +279,7 @@ class StackProvisioner:
             {
                 "initialized": True,
                 "production": production,
-                "download_host": download_host,
+                "shared_edge_traefik": shared_edge,
                 "tenants": sorted(tenants),
                 "databases": databases,
             },
@@ -293,6 +295,142 @@ class StackProvisioner:
             )
             if part
         )
+
+    def deprovision(
+        self,
+        tenant_slug: str,
+        *,
+        db_name: str,
+        shared_edge_docker_network: str = "",
+    ) -> TenantRuntimeResult:
+        started = time.monotonic()
+        validate_db_name(db_name)
+
+        state = self._load_state()
+        hs, hp = tenant_compose_services(tenant_slug)
+        compose_path = self._stack_dir / "compose.yml"
+
+        logs: list[str] = [f"deprovision_tenant: removing {tenant_slug}"]
+
+        if compose_path.is_file():
+            proc = self._compose_runner(
+                ["rm", "-sf", hs, hp],
+                self._stack_dir,
+                self._compose_timeout_seconds,
+            )
+            rm_output = "\n".join(
+                part for part in (proc.stdout, proc.stderr) if part
+            ).strip()
+            if rm_output:
+                logs.append(rm_output)
+            if proc.returncode != 0:
+                duration_ms = int((time.monotonic() - started) * 1000)
+                return TenantRuntimeResult(
+                    exit_code=proc.returncode,
+                    duration_ms=duration_ms,
+                    logs=rm_output or "deprovision_tenant: docker compose rm failed",
+                    runtime_status="failed",
+                )
+
+        tenant_dir = self._stack_dir / "tenants" / tenant_slug
+        if tenant_dir.exists():
+            shutil.rmtree(tenant_dir)
+            logs.append(f"removed {tenant_dir}")
+
+        tenants = [slug for slug in state.get("tenants", []) if slug != tenant_slug]
+        databases = {
+            name: line
+            for name, line in dict(state.get("databases", {})).items()
+            if name != db_name
+        }
+
+        if state.get("initialized"):
+            try:
+                self._write_stack_bundle(
+                    state=state,
+                    tenants=tenants,
+                    databases=databases,
+                    shared_edge_docker_network=shared_edge_docker_network,
+                )
+                if compose_path.is_file():
+                    compose_logs = self._compose_up()
+                    logs.append(compose_logs)
+            except StackProvisionError as exc:
+                duration_ms = int((time.monotonic() - started) * 1000)
+                return TenantRuntimeResult(
+                    exit_code=1,
+                    duration_ms=duration_ms,
+                    logs=str(exc),
+                    runtime_status="failed",
+                )
+
+        env_values = _read_env_file(self._stack_dir / ".env")
+        postgres_password = env_values.get("POSTGRES_PASSWORD", "")
+        if postgres_password:
+            try:
+                drop_logs = self._drop_database(db_name, postgres_password)
+                logs.append(drop_logs)
+            except StackProvisionError as exc:
+                duration_ms = int((time.monotonic() - started) * 1000)
+                return TenantRuntimeResult(
+                    exit_code=1,
+                    duration_ms=duration_ms,
+                    logs=str(exc),
+                    runtime_status="failed",
+                )
+
+        if state.get("initialized"):
+            state.update(
+                {
+                    "tenants": sorted(tenants),
+                    "databases": databases,
+                },
+            )
+            if not tenants:
+                state["initialized"] = False
+            self._save_state(state)
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return TenantRuntimeResult(
+            exit_code=0,
+            duration_ms=duration_ms,
+            logs="\n".join(logs),
+            runtime_status="deprovisioned",
+        )
+
+    def _write_stack_bundle(
+        self,
+        *,
+        state: dict[str, Any],
+        tenants: list[str],
+        databases: dict[str, str],
+        shared_edge_docker_network: str,
+    ) -> None:
+        production = bool(state.get("production"))
+        shared_edge = bool(state.get("shared_edge_traefik"))
+
+        env_path = self._stack_dir / ".env"
+        env_values = _read_env_file(env_path)
+        postgres_password = env_values.get("POSTGRES_PASSWORD", "")
+        pgbouncer_password = env_values.get("PGBOUNCER_PASSWORD", "")
+
+        tenant_blocks = self._collect_tenant_compose_blocks(sorted(tenants))
+        bundle = stack_file_bundle(
+            production=production,
+            database_lines=databases,
+            postgres_user=DEFAULT_POSTGRES_USER,
+            postgres_password=postgres_password,
+            pgbouncer_user=env_values.get("PGBOUNCER_USER", DEFAULT_PGBOUNCER_USER),
+            pgbouncer_password=pgbouncer_password,
+            database_names_for_init=sorted(databases),
+            tenant_service_blocks=tenant_blocks,
+            shared_edge_traefik=shared_edge,
+            shared_edge_docker_network=shared_edge_docker_network,
+        )
+        for relative_path, content in bundle.items():
+            target = self._stack_dir / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
 
     def _load_state(self) -> dict[str, Any]:
         state_path = self._stack_dir / "stack-state.json"
@@ -460,3 +598,58 @@ class StackProvisioner:
         )
         restart_log = (restart.stderr or restart.stdout or "").strip()
         return f"created database {db_name}" + (f"; {restart_log}" if restart_log else "")
+
+    def _drop_database(self, db_name: str, postgres_password: str) -> str:
+        check = subprocess.run(
+            [
+                "docker",
+                "exec",
+                "postgres",
+                "psql",
+                "-U",
+                "postgres",
+                "-tAc",
+                f"SELECT 1 FROM pg_database WHERE datname = '{db_name}'",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if check.returncode != 0:
+            raise StackProvisionError(
+                check.stderr or check.stdout or "database existence check failed",
+            )
+        if check.stdout.strip() != "1":
+            return f"database {db_name} does not exist"
+
+        drop = subprocess.run(
+            [
+                "docker",
+                "exec",
+                "postgres",
+                "psql",
+                "-U",
+                "postgres",
+                "-c",
+                f"DROP DATABASE {db_name} WITH (FORCE);",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if drop.returncode != 0:
+            raise StackProvisionError(
+                drop.stderr or drop.stdout or "drop database failed",
+            )
+
+        restart = subprocess.run(
+            ["docker", "restart", "pgbouncer"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        restart_log = (restart.stderr or restart.stdout or "").strip()
+        return f"dropped database {db_name}" + (f"; {restart_log}" if restart_log else "")

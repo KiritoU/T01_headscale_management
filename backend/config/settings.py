@@ -8,11 +8,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
-APP_VERSION = os.environ.get("APP_VERSION", "0.1.0")
+SHARED_EDGE_DOCKER_NETWORK = os.environ.get(
+    "SHARED_EDGE_DOCKER_NETWORK",
+    "t01_headscale_management_app",
+).strip()
+DOWNLOAD_HOST = os.environ.get("DOWNLOAD_HOST", "").strip()
 
-# Public URL reachable by workers/gateways (e.g. http://203.0.113.10:8080).
+APP_VERSION = os.environ.get("APP_VERSION", "0.1.0")
 # Used for enrollment curl commands and install script injection.
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+RESOURCE_SAMPLE_RETENTION_SECONDS = int(
+    os.environ.get("RESOURCE_SAMPLE_RETENTION_SECONDS", str(6 * 60 * 60)),
+)
 
 _running_tests = "pytest" in sys.modules or os.environ.get("DJANGO_TEST") == "1"
 
@@ -46,6 +54,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "accounts",
     "core",
+    "dns",
     "agents",
     "workers",
     "tenants",

@@ -70,6 +70,30 @@ verbose = 0
 """
 
 
+CONTROL_PLANE_EDGE_NETWORK = "control_plane"
+
+
+def compose_networks_block(*, shared_edge_traefik: bool, network_name: str) -> str:
+    if not shared_edge_traefik:
+        return ""
+    return f"""
+networks:
+  {CONTROL_PLANE_EDGE_NETWORK}:
+    external: true
+    name: {network_name}
+"""
+
+
+def service_edge_networks_block(*, shared_edge_traefik: bool) -> str:
+    if not shared_edge_traefik:
+        return ""
+    return (
+        f"    networks:\n"
+        f"      - default\n"
+        f"      - {CONTROL_PLANE_EDGE_NETWORK}\n"
+    )
+
+
 def traefik_router_labels(
     *,
     router_name: str,
@@ -77,12 +101,19 @@ def traefik_router_labels(
     production: bool,
     service_port: int,
     middlewares: tuple[str, ...] = (),
+    docker_network: str = "",
 ) -> list[str]:
     labels = [
         "traefik.enable=true",
         f"traefik.http.routers.{router_name}.rule=Host(`{host}`)",
         f"traefik.http.services.{router_name}.loadbalancer.server.port={service_port}",
     ]
+    # When a container is attached to multiple Docker networks (shared edge mode
+    # joins both the worker stack network and the control plane network), Traefik
+    # otherwise picks a network at random and may select one it cannot reach,
+    # causing requests to hang. Pin the network explicitly.
+    if docker_network:
+        labels.append(f"traefik.docker.network={docker_network}")
     entrypoint = "websecure" if production else "web"
     labels.append(f"traefik.http.routers.{router_name}.entrypoints={entrypoint}")
     if production:
@@ -143,14 +174,22 @@ def generate_traefik_service(*, production: bool) -> str:
 """
 
 
-def generate_scripts_service(*, production: bool, download_host: str) -> str:
+def generate_scripts_service(
+    *,
+    production: bool,
+    download_host: str,
+    shared_edge_traefik: bool = False,
+    shared_edge_docker_network: str = "",
+) -> str:
     labels = traefik_router_labels(
         router_name="scripts",
         host=download_host,
         production=production,
         service_port=80,
+        docker_network=shared_edge_docker_network if shared_edge_traefik else "",
     )
     label_lines = "\n".join(f'      - "{label}"' for label in labels)
+    networks_block = service_edge_networks_block(shared_edge_traefik=shared_edge_traefik)
     return f"""  scripts:
     image: nginx:alpine
     container_name: scripts
@@ -160,7 +199,7 @@ def generate_scripts_service(*, production: bool, download_host: str) -> str:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     labels:
 {label_lines}
-"""
+{networks_block}"""
 
 
 def generate_postgres_service() -> str:
@@ -261,24 +300,31 @@ def generate_stack_env_template(*, production: bool) -> str:
 def assemble_compose_yml(
     *,
     production: bool,
-    download_host: str,
     tenant_service_blocks: list[str],
+    shared_edge_traefik: bool = False,
+    shared_edge_docker_network: str = "",
 ) -> str:
-    shared = [
-        "services:",
-        generate_traefik_service(production=production).rstrip(),
-        generate_postgres_service().rstrip(),
-        generate_pgbouncer_service().rstrip(),
-        generate_scripts_service(production=production, download_host=download_host).rstrip(),
-    ]
+    shared = ["services:"]
+    if not shared_edge_traefik:
+        shared.append(generate_traefik_service(production=production).rstrip())
+    shared.extend(
+        [
+            generate_postgres_service().rstrip(),
+            generate_pgbouncer_service().rstrip(),
+        ],
+    )
     blocks = shared + [block.rstrip() for block in tenant_service_blocks if block.strip()]
-    return "\n\n".join(blocks) + "\n"
+    body = "\n\n".join(blocks)
+    networks = compose_networks_block(
+        shared_edge_traefik=shared_edge_traefik,
+        network_name=shared_edge_docker_network,
+    )
+    return body + networks + "\n"
 
 
 def stack_file_bundle(
     *,
     production: bool,
-    download_host: str,
     database_lines: dict[str, str],
     postgres_user: str,
     postgres_password: str,
@@ -286,10 +332,11 @@ def stack_file_bundle(
     pgbouncer_password: str,
     database_names_for_init: list[str],
     tenant_service_blocks: list[str],
+    shared_edge_traefik: bool = False,
+    shared_edge_docker_network: str = "",
 ) -> dict[str, str]:
     return {
         "ACL.json": DEFAULT_ACL_JSON,
-        "nginx.conf": NGINX_CONF,
         "pgbouncer/pgbouncer.ini": generate_pgbouncer_ini(database_lines),
         "pgbouncer/userlist.txt": generate_pgbouncer_userlist(
             postgres_user=postgres_user,
@@ -304,8 +351,9 @@ def stack_file_bundle(
         ),
         "compose.yml": assemble_compose_yml(
             production=production,
-            download_host=download_host,
             tenant_service_blocks=tenant_service_blocks,
+            shared_edge_traefik=shared_edge_traefik,
+            shared_edge_docker_network=shared_edge_docker_network,
         ),
     }
 
